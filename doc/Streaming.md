@@ -28,8 +28,8 @@ Pairing controllers plugged in over USB needs Administrator rights on Windows, a
 |---|---|---|
 | `<p>/status` | string `move` / `none` | on connect / disconnect, including quitting, `--idle-timeout` and `--shutdown-on-exit` |
 | `<p>/battery` | float 0–1 | on change; in steps of 0.2 (the controller reports levels 0–5). While charging, the level isn't known and the last one stays; `1` when charged on the charger. |
-| `<p>/move/button/{triangle,circle,cross,square,select,start,ps,move,t}` | int 0/1 | on change. `t` is the trigger's digital state, pressed beyond a small travel. |
-| `<p>/move/button/trigger` | float 0–1 | continuous: the analog trigger (`move/button/t` is its digital state) |
+| `<p>/move/button/{triangle,circle,cross,square,select,start,ps,move}` | int 0/1 | on change |
+| `<p>/move/button/trigger` | float 0–1 | continuous: the analog trigger. There's no digital trigger address; threshold this value instead. |
 | `<p>/move/rpy` | 3 floats, degrees: roll, pitch, yaw | **placeholder**: `0, 0, 0`, sent once on connect. Sensor fusion comes in a later step. |
 | `<p>/move/quat` | 4 floats: w, x, y, z | **placeholder**: `1, 0, 0, 0` (no rotation), sent once on connect |
 | `<p>/move/accel` | 3 floats, g: x, y, z | continuous, calibrated by psmoveapi (factory calibration read over USB when pairing) |

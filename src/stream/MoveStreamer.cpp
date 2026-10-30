@@ -20,8 +20,9 @@ struct ButtonName {
 const ButtonName sButtons[] = {
     {Btn_TRIANGLE, "move/button/triangle"}, {Btn_CIRCLE, "move/button/circle"}, {Btn_CROSS, "move/button/cross"},
     {Btn_SQUARE, "move/button/square"},     {Btn_SELECT, "move/button/select"}, {Btn_START, "move/button/start"},
-    {Btn_PS, "move/button/ps"},             {Btn_MOVE, "move/button/move"},     {Btn_T, "move/button/t"},
+    {Btn_PS, "move/button/ps"},             {Btn_MOVE, "move/button/move"},
 };
+// The trigger's digital state (Btn_T) isn't sent: move/button/trigger is analog, receivers threshold it themselves.
 
 const float sRadiansToDegrees = 57.29577951f;
 const float sMaxRumblePulseMs = 3000.0f;
