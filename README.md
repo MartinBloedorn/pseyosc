@@ -2,7 +2,7 @@
 
 Cross-platform utility that pairs PlayStation Move motion controllers (and later handles the PlayStation 3 Eye camera), and turns their input into OSC messages.
 
-> **Status:** early. `pseyosc-pair` (pairing & testing) works on Windows with a CECH-ZCM1E controller. No OSC output yet. See [doc/DevelopmentNotes.md](doc/DevelopmentNotes.md).
+> **Status:** early. `pseyosc-pair` (pairing & testing) and `pseyosc-stream` (OSC) work on Windows with a CECH-ZCM1E controller; no sensor fusion yet (orientation is a placeholder). See [doc/Streaming.md](doc/Streaming.md). See [doc/DevelopmentNotes.md](doc/DevelopmentNotes.md).
 
 ## How pairing works
 
@@ -28,6 +28,25 @@ cmake --build build --config Release
 On Linux, psmoveapi needs the development packages of D-Bus, libudev and BlueZ. Neither Linux nor macOS has been built yet.
 
 ## Usage
+
+### `pseyosc-stream`: OSC output
+
+```
+build\Release\pseyosc-stream.exe --host 127.0.0.1 --port 4321 --prefix pseyosc --in-port 4322
+```
+
+This pairs and connects controllers like `pseyosc-pair` (it takes the same options), and streams every controller's input to the OSC target, for example:
+
+```
+/pseyosc/0/status              "move"
+/pseyosc/0/move/button/cross   1
+/pseyosc/0/move/button/trigger 0.42
+/pseyosc/0/move/accel          0.54 0.03 0.83
+/pseyosc/0/move/gyro           0.44 0.73 -0.45
+/pseyosc/0/battery             0.8
+```
+
+With `--in-port`, it also takes `/pseyosc/0/move/rumble/trigger 0.5`, `.../rumble/pulse 1 300` and `/pseyosc/0/move/led 0 0.5 1` (orb color). `move/rpy` and `move/quat` are placeholders until sensor fusion is added. See [doc/Streaming.md](doc/Streaming.md) for all addresses and options. To check the output: `python tools/oscdump.py 4321 20`.
 
 ### `pseyosc-pair`: pairing & testing
 

@@ -23,7 +23,10 @@ class AbstractHubListener
 public:
     virtual ~AbstractHubListener() = default;
 
-    /*! \brief A controller connected over Bluetooth, or was already connected when the hub started. */
+    /*! \brief A controller connected over Bluetooth, or was already connected when the hub started.
+
+        Called after the connection rumble has ended, so the listener may set the rumble right away.
+     */
     virtual void connected(int id, PSMove *move, const std::string &address) {}
     virtual void disconnected(int id) {}
 

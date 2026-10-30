@@ -299,11 +299,15 @@ void MoveHub::runDevice(int index, PSMove *move)
     const char *label = psmove_get_model(move) == Model_ZCM2 ? "Motion Controller (ZCM2)" : "Motion Controller";
     std::printf("[%d] %s %s connected\n", id, label, address.c_str());
 
+    // The connection rumble ends before the listener takes over, so it can't cut short a rumble the listener sets
+    // (psmoveapi can't tell the motor's state). Input reports queue up meanwhile.
     const Color color = sIdColors[id];
     psmove_set_leds(move, color.r, color.g, color.b);
     psmove_set_rumble(move, 160);
-    const Clock::time_point rumbleEnd = Clock::now() + sRumbleDuration;
-    bool isRumbling = true;
+    psmove_update_leds(move);
+    std::this_thread::sleep_for(sRumbleDuration);
+    psmove_set_rumble(move, 0);
+    psmove_update_leds(move);
     if (mListener)
         mListener->connected(id, move, address);
 
@@ -341,11 +345,7 @@ void MoveHub::runDevice(int index, PSMove *move)
             lastActivity = now;
         }
 
-        if (isRumbling && now >= rumbleEnd) {
-            psmove_set_rumble(move, 0);
-            isRumbling = false;
-        }
-        // Sends changed LEDs/rumble, and resends them every few seconds: the controller switches them off otherwise.
+        // Sends changed LEDs/rumble (also the listener's), and resends them every few seconds: the controller switches them off otherwise.
         if (psmove_update_leds(move) == Update_Failed)
             break;
 

@@ -76,3 +76,15 @@ endif()
 
 add_executable(pseyosc-pair src/pairtool/main.cpp)
 target_link_libraries(pseyosc-pair PRIVATE hub)
+
+add_library(osc STATIC src/osc/OscSender.h src/osc/OscSender.cpp src/osc/OscReceiver.h src/osc/OscReceiver.cpp)
+target_include_directories(osc PUBLIC src)
+if(WIN32)
+    target_link_libraries(osc PRIVATE ws2_32)
+endif()
+
+add_executable(pseyosc-stream src/stream/main.cpp src/stream/MoveStreamer.h src/stream/MoveStreamer.cpp)
+target_link_libraries(pseyosc-stream PRIVATE hub osc)
+if(WIN32)
+    target_compile_definitions(pseyosc-stream PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)
+endif()

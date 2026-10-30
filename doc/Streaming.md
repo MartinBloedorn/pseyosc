@@ -1,0 +1,79 @@
+# OSC streaming
+
+`pseyosc-stream` pairs and connects controllers the same way `pseyosc-pair` does (see the [README](../README.md#how-pairing-works)), and streams their input as OSC over UDP. The address layout follows wiimosc's, with `move/` in place of `mote/`.
+
+```
+pseyosc-stream --host 127.0.0.1 --port 4321 --prefix pseyosc [--in-port 4322] [--max-rate 60]
+```
+
+| Option | Default | Meaning |
+|---|---|---|
+| `--host` | `127.0.0.1` | Target: host name, IPv4 address, or broadcast address (`255.255.255.255`, `192.168.1.255`). `0.0.0.0` is rejected, since it's a listening address. |
+| `--port` | `4321` | Target UDP port |
+| `--prefix` | `pseyosc` | Address prefix. Normalized: `pseyosc`, `/pseyosc/` → `/pseyosc`; may be empty. |
+| `--in-port <port>` | off | Receives OSC on this UDP port, on all interfaces, to control the controllers. See [Input](#input---in-port). |
+| `--max-rate` | `0` | Max. rate (Hz) of continuous values per controller; `0` = unlimited. Buttons, battery and status messages are never limited. |
+| `--repair` | off | As for `pseyosc-pair`: also registers controllers on USB that are already paired with this computer again. |
+| `--id <id>=<address>` | | Always gives the controller with this Bluetooth address this id (0–7) and its orb color. Repeatable; also available in `pseyosc-pair`. |
+| `--shutdown-on-exit` | off | Switches off all connected controllers when quitting, by dropping their Bluetooth connections. |
+| `--idle-timeout <minutes>` | `0` (never) | Switches off controllers that have been idle this long. Only button and trigger changes count as activity so far, not motion. Fractions work (`0.5`). |
+
+Pairing controllers plugged in over USB needs Administrator rights on Windows, as for `pseyosc-pair`; without them, controllers paired before still connect when PS is pressed.
+
+## Addresses
+
+`<p>` is `<prefix>/<id>`, e.g. `/pseyosc/0`. `<id>` is 0-based (0–7), the same number the terminal output shows (`[0] Motion Controller 00:13:8A:9A:FE:2E connected`); the orb lights up in its id's color (0 red, 1 green, 2 blue, 3 yellow, 4 magenta, 5 cyan, 6 white, 7 orange). Fixed ids work as in wiimosc: on Ctrl+C, the tool prints the `--id` arguments for the connected controllers.
+
+| Address | Arguments | Sent |
+|---|---|---|
+| `<p>/status` | string `move` / `none` | on connect / disconnect, including quitting, `--idle-timeout` and `--shutdown-on-exit` |
+| `<p>/battery` | float 0–1 | on change; in steps of 0.2 (the controller reports levels 0–5). While charging, the level isn't known and the last one stays; `1` when charged on the charger. |
+| `<p>/move/button/{triangle,circle,cross,square,select,start,ps,move,t}` | int 0/1 | on change. `t` is the trigger's digital state, pressed beyond a small travel. |
+| `<p>/move/button/trigger` | float 0–1 | continuous: the analog trigger (`move/button/t` is its digital state) |
+| `<p>/move/rpy` | 3 floats, degrees: roll, pitch, yaw | **placeholder**: `0, 0, 0`, sent once on connect. Sensor fusion comes in a later step. |
+| `<p>/move/quat` | 4 floats: w, x, y, z | **placeholder**: `1, 0, 0, 0` (no rotation), sent once on connect |
+| `<p>/move/accel` | 3 floats, g: x, y, z | continuous, calibrated by psmoveapi (factory calibration read over USB when pairing) |
+| `<p>/move/gyro` | 3 floats, deg/s: x, y, z | continuous: rotation rates about the controller's x, y, z axes, calibrated by psmoveapi |
+
+"Continuous" values are sent whenever they change, at most `--max-rate` times per second. After connecting, every value is sent once, so receivers start with a complete state.
+
+**Axes** are psmoveapi's sensor axes, which aren't the Wiimote's, so `accel`/`gyro` don't map one-to-one onto wiimosc's. According to psmoveapi's docs, y points along the controller towards the orb (`accel` y ≈ 1 with the orb up); the directions of x and z still need checking on hardware, and belong to the sensor fusion step.
+
+## Input (`--in-port`)
+
+| Address | Arguments | Effect |
+|---|---|---|
+| `<p>/move/rumble/trigger` | number, 0–1 | Rumble at that intensity until the next rumble request; `0` switches it off. Any numeric type works (float, int, double, `T`/`F`). |
+| `<p>/move/rumble/pulse` | 2 numbers: 0–1, ms | Rumble at that intensity for the given duration (capped at 3000 ms), then off. An intensity or duration of 0 switches it off right away. |
+| `<p>/move/led` | 3 numbers: red, green, blue, 0–1 each | Sets the orb's color (replacing the id color) until the next request or a reconnect. `0 0 0` switches it off. |
+
+- **Rumble has intensity levels** (unlike the Wiimote's on/off motor, hence no 0.5 threshold as in wiimosc). The motor doesn't start below about half power (on a ZCM1, psmoveapi's 102 of 255 did nothing, 128 rumbled), so any intensity above 0 maps onto 128–255: 0.01 is the weakest rumble that still turns the motor, 1 the strongest.
+- **The last rumble request wins**, as in wiimosc: `trigger` and `pulse` replace whatever is ongoing.
+- **Timing**: a request takes effect with the controller's next input report (~10 ms). The hub's connection rumble (300 ms) ends before streaming starts, so requests sent meanwhile take effect afterwards. Requests for ids that aren't connected are dropped; a controller that reconnects starts with the motor off and its id color.
+- **Quitting** (Ctrl+C) switches off the orb and the motor of every connected controller.
+- **Ignored input** is reported once per address in the terminal (`[osc] ignoring /pseyosc/0/move/bogus: unknown address`): unknown addresses (including another prefix), ids above 7, and missing or wrong arguments.
+- Testing: `python tools/oscsend.py 4322 /pseyosc/0/move/led 0 0.5 1` (in Git Bash, prefix it with `MSYS_NO_PATHCONV=1`, otherwise the address is turned into a Windows path).
+
+## Notes & caveats
+
+- **Rate**: a ZCM1 connected over Bluetooth sends ~90 input reports/s (measured with a resting controller). `accel` and `gyro` change on nearly every one, so that's ~180 messages/s per controller. Each report holds two sensor samples; the streamer sends the newer one.
+- **Battery** was seen to change from 0.8 to 0.6 within seconds of connecting; it may flicker between two levels at a step boundary. Not yet investigated.
+- **Magnetometer**: not streamed yet. psmoveapi warns `Magnetometer ... not yet calibrated`; it belongs to the sensor fusion step.
+- **Testing**: only one program should receive on the target port, see wiimosc's notes. `python tools/oscdump.py 4321 20` prints a summary per address, `python tools/oscrate.py 4321 20` the messages per second.
+
+## Implementation
+
+- `src/hub/MoveHub`: shared by both tools, see [DevelopmentNotes](DevelopmentNotes.md#3-pairing--hub-findings-and-decisions). It calls the listener from each controller's own thread: `connected()` after the connection rumble, `update()` after each input report, `disconnected()` when it goes away or the tool quits. After each `update()`, the hub sends changed LEDs/rumble (`psmove_update_leds()`).
+- `src/osc`: copied unchanged from wiimosc (`OscSender`: minimal OSC 1.0 encoder + UDP; `OscReceiver`: parser + UDP receiver thread).
+- `src/stream/MoveStreamer`: the listener that maps controller state to OSC, sending a value only if it differs from the last one sent on that address (cached per controller). OSC input is stored per id under a mutex by the receiver's thread, and applied with `psmove_set_rumble()`/`psmove_set_leds()` by the controller's thread on its next `update()`, since only that thread touches its `PSMove`.
+- `tools/`: `oscdump.py`, `oscsend.py`, `oscrate.py`, copied from wiimosc.
+
+## Status
+
+| Item | State |
+|---|---|
+| status, buttons (initial state), trigger, accel, gyro, battery, placeholder rpy/quat | ✅ received with `oscdump.py` from a resting ZCM1 (~90 reports/s) |
+| `--in-port`: parsing, ignored-input message | ✅ |
+| `--in-port`: `move/led`, `move/rumble/pulse`, `move/rumble/trigger` | ✅ user-confirmed on a ZCM1; below 0.5 the motor didn't turn, hence the mapping onto 128–255 (user-confirmed) |
+| `status none` on quit, button presses, `--max-rate`, reconnect while streaming | ⏳ not yet confirmed |
+| Axis directions of `accel`/`gyro` | ⏳ from psmoveapi's docs, not verified |
