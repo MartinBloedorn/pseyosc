@@ -51,7 +51,7 @@ doc/           this file
 
 ## 4. psmoveapi patches
 
-`external/psmoveapi` is modified locally; every change is marked with `pseyosc patch`. The changes aren't committed yet: the user will fork psmoveapi and push them there.
+`external/psmoveapi` is modified locally; every change is marked with `pseyosc patch`. They are committed on the submodule's `master` (`5702bee`), but only locally: `.gitmodules` still points to upstream `thp/psmoveapi`. Once the user has forked it, point `.gitmodules` to the fork, and push the fork before pseyosc (as for wiimosc's wiiuse fork).
 
 - `include/psmove.h`: `PSMOVE_STATIC` defines `ADDAPI` empty on Windows. Without it, the header declares `dllimport` unless `BUILDING_SHARED_LIBRARY` is set, and static linking fails (the same issue as `WIIUSE_STATIC` in wiimosc).
 
