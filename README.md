@@ -2,7 +2,7 @@
 
 Cross-platform utility that pairs PlayStation Move motion controllers (and later handles the PlayStation 3 Eye camera), and turns their input into OSC messages.
 
-> **Status:** early. `pseyosc-pair` (pairing & testing) and `pseyosc-stream` (OSC) work on Windows with a CECH-ZCM1E controller; no sensor fusion yet (orientation is a placeholder). `pseyosc-video` shows the PS3 Eye camera's live image (Windows only so far); no tracking yet. See [doc/Streaming.md](doc/Streaming.md). See [doc/DevelopmentNotes.md](doc/DevelopmentNotes.md).
+> **Status:** early. `pseyosc-pair` (pairing & testing) and `pseyosc-stream` (OSC) work on Windows with a CECH-ZCM1E controller; no sensor fusion yet (orientation is a placeholder). `pseyosc-video` shows the PS3 Eye camera's live image, and `pseyosc-track` tracks the controllers' orbs with it (Windows only so far; positions aren't streamed as OSC yet). See [doc/Streaming.md](doc/Streaming.md). See [doc/DevelopmentNotes.md](doc/DevelopmentNotes.md).
 
 ## How pairing works
 
@@ -25,7 +25,15 @@ cmake -S . -B build -G "Visual Studio 17 2022" -A x64
 cmake --build build --config Release
 ```
 
-On Linux, psmoveapi needs the development packages of D-Bus, libudev and BlueZ. Neither Linux nor macOS has been built yet; `pseyosc-video` is only built on Windows.
+On Linux, psmoveapi needs the development packages of D-Bus, libudev and BlueZ. Neither Linux nor macOS has been built yet; `pseyosc-video` and `pseyosc-track` are only built on Windows.
+
+`pseyosc-track` (psmoveapi's tracker) also needs OpenCV 4. It isn't installed system-wide, but built in the workspace's shared `lib` folder (next to `pseyosc`), see [lib/README.md](../lib/README.md):
+
+```
+sh ../lib/opencv/build.sh
+```
+
+CMake looks for it only in `PSEYOSC_OPENCV_DIR`, by default `../lib/opencv/install`; to use another OpenCV 4 install, pass e.g. `-DPSEYOSC_OPENCV_DIR=C:/opencv/build` (the folder containing `OpenCVConfig.cmake`). Without OpenCV, CMake warns and skips `pseyosc-track`.
 
 ## Camera setup (Windows)
 
@@ -90,4 +98,18 @@ Options:
 build\Release\pseyosc-video.exe [--camera 0] [--resolution 640x480|320x240] [--fps 60]
 ```
 
-Opens the camera (see [Camera setup](#camera-setup-windows)) and shows its live image in a window, with automatic gain, exposure and white balance. The window title shows the measured frame rate. The camera supports up to 75 Hz at 640x480 and 187 Hz at 320x240 (higher requests are capped); other rates become the next lower one it supports (e.g. 60, 50, 40, 30 at 640x480). Esc, closing the window, or Ctrl+C quits.
+Opens the camera (see [Camera setup](#camera-setup-windows)) and shows its live image in a window, with automatic gain, exposure and white balance.
+
+### `pseyosc-track`: tracking test
+
+```
+build\Release\pseyosc-track.exe [--exposure 0.3] [--no-mirror]
+```
+
+Tracks the orbs of all controllers connected over Bluetooth (pair them with `pseyosc-pair` first and press PS; no other pseyosc tool may be running) with psmoveapi's tracker. Each orb blinks briefly while the tracker learns its color in the camera image; then the window shows the darkened camera image with the tracked orbs, and the terminal prints their positions ten times a second:
+
+```
+[0] x  312.4 y  201.7 r  14.2 px,   93 cm
+```
+
+`x`/`y` is the orb's center in the image and `r` its radius, in pixels; the distance from the camera is estimated from the radius, and is calibrated by psmoveapi for the lens's wide-angle setting (blue dot). The numbers `[0]`, `[1]` are psmoveapi's order of the controllers, not `pseyosc-stream`'s ids. R calibrates again (e.g. after the lighting changed), Esc or Ctrl+C quits. `--exposure` (0-1) sets the camera's fixed exposure: lower values leave less but the orbs visible. The window title shows the measured frame rate. The camera supports up to 75 Hz at 640x480 and 187 Hz at 320x240 (higher requests are capped); other rates become the next lower one it supports (e.g. 60, 50, 40, 30 at 640x480). Esc, closing the window, or Ctrl+C quits.

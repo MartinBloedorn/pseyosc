@@ -14,6 +14,9 @@ endif()
 set(PSMOVEAPI_VERSION_MAJOR 4)
 set(PSMOVEAPI_VERSION_MINOR 0)
 set(PSMOVEAPI_VERSION_PATCH 12)
+if(WIN32)
+    set(PSMOVE_USE_PS3EYE_DRIVER ON) # the tracker's camera driver on Windows, see below
+endif()
 configure_file(${PSMOVEAPI_DIR}/include/psmove_config.h.in ${CMAKE_BINARY_DIR}/psmoveapi/psmove_config.h @ONLY)
 
 file(GLOB PSMOVEAPI_MATH_SRC ${PSMOVEAPI_DIR}/src/math/*.c ${PSMOVEAPI_DIR}/src/math/*.cpp)
@@ -90,7 +93,8 @@ if(WIN32)
 endif()
 
 # Camera: PS3EYEDriver talks to the PS3 Eye directly over libusb (psmoveapi's camera driver on Windows). Both are
-# psmoveapi submodules; libusb is built from source like hidapi. The viewer's window is Win32, so Windows only for now.
+# psmoveapi submodules; libusb is built from source like hidapi. Windows only for now: elsewhere, psmoveapi reads the
+# camera with V4L2 (Linux) or AVFoundation (macOS), and the viewer's window is Win32.
 if(WIN32)
     set(LIBUSB_DIR ${PSMOVEAPI_DIR}/external/libusb-1.0)
     set(PS3EYEDRIVER_DIR ${PSMOVEAPI_DIR}/external/PS3EYEDriver)
@@ -114,7 +118,9 @@ if(WIN32)
     target_include_directories(libusb PUBLIC ${LIBUSB_DIR}/libusb PRIVATE ${LIBUSB_DIR}/msvc)
     target_compile_definitions(libusb PRIVATE _WIN32_WINNT=_WIN32_WINNT_VISTA _CRT_SECURE_NO_WARNINGS)
 
-    add_library(ps3eye STATIC ${PS3EYEDRIVER_DIR}/src/ps3eye.h ${PS3EYEDRIVER_DIR}/src/ps3eye.cpp)
+    # ps3eye_capi: the C API psmoveapi's camera driver uses.
+    add_library(ps3eye STATIC ${PS3EYEDRIVER_DIR}/src/ps3eye.h ${PS3EYEDRIVER_DIR}/src/ps3eye.cpp
+                              ${PS3EYEDRIVER_DIR}/src/ps3eye_capi.h ${PS3EYEDRIVER_DIR}/src/ps3eye_capi.cpp)
     target_include_directories(ps3eye PUBLIC ${PS3EYEDRIVER_DIR}/src)
     target_link_libraries(ps3eye PUBLIC libusb)
     if(MSVC)
@@ -125,4 +131,41 @@ if(WIN32)
     add_executable(pseyosc-video src/video/main.cpp)
     target_link_libraries(pseyosc-video PRIVATE ps3eye)
     target_compile_definitions(pseyosc-video PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)
+
+    # psmoveapi's tracker needs OpenCV 4. It's looked for only in PSEYOSC_OPENCV_DIR (an OpenCV install folder,
+    # containing OpenCVConfig.cmake), never in system locations or OpenCV_DIR, so a stray OpenCV isn't picked up.
+    # By default that's the workspace's lib/opencv/install, built by lib/opencv/build.sh. Without it, pseyosc-track
+    # isn't built.
+    set(PSEYOSC_OPENCV_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../lib/opencv/install CACHE PATH "OpenCV 4 install folder")
+    unset(OpenCV_DIR CACHE) # otherwise a previous result would win over a changed PSEYOSC_OPENCV_DIR
+    set(OpenCV_STATIC ON) # lib/opencv builds static libraries; OpenCV's Windows config looks for DLLs otherwise
+    find_package(OpenCV 4 CONFIG QUIET COMPONENTS core imgproc calib3d highgui videoio
+                 PATHS ${PSEYOSC_OPENCV_DIR} NO_DEFAULT_PATH)
+    if(OpenCV_FOUND)
+        message(STATUS "OpenCV ${OpenCV_VERSION}: ${OpenCV_DIR}")
+        set(PSMOVEAPI_TRACKER_DIR ${PSMOVEAPI_DIR}/src/tracker)
+        add_library(psmoveapi_tracker STATIC
+            ${PSMOVEAPI_TRACKER_DIR}/psmove_tracker.cpp
+            ${PSMOVEAPI_TRACKER_DIR}/psmove_tracker_hue_calibration.cpp
+            ${PSMOVEAPI_TRACKER_DIR}/tracker_helpers.cpp
+            ${PSMOVEAPI_TRACKER_DIR}/camera_control.cpp
+            ${PSMOVEAPI_TRACKER_DIR}/camera_control_driver.cpp
+            ${PSMOVEAPI_TRACKER_DIR}/camera_control_layouts.cpp
+            ${PSMOVEAPI_TRACKER_DIR}/camera_control_driver_ps3eyedriver.cpp
+            ${PSMOVEAPI_TRACKER_DIR}/psmove_fusion.cpp)
+        target_include_directories(psmoveapi_tracker PRIVATE ${PSMOVEAPI_DIR}/external/glm)
+        target_link_libraries(psmoveapi_tracker PUBLIC psmoveapi ps3eye ${OpenCV_LIBS})
+        target_compile_definitions(psmoveapi_tracker PRIVATE WIN32_LEAN_AND_MEAN _USE_MATH_DEFINES NOMINMAX
+                                                             _CRT_SECURE_NO_DEPRECATE)
+        if(MSVC)
+            # C4244: psmove_tracker.cpp stores double HSV values as floats.
+            target_compile_options(psmoveapi_tracker PRIVATE /Zc:preprocessor /W1 /wd4244)
+        endif()
+
+        add_executable(pseyosc-track src/track/main.cpp)
+        target_link_libraries(pseyosc-track PRIVATE psmoveapi_tracker)
+    else()
+        message(WARNING "OpenCV 4 not found in PSEYOSC_OPENCV_DIR (${PSEYOSC_OPENCV_DIR}): pseyosc-track isn't built. "
+                        "Build it with lib/opencv/build.sh, or set PSEYOSC_OPENCV_DIR to an OpenCV install folder.")
+    endif()
 endif()
