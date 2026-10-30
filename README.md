@@ -103,7 +103,7 @@ Opens the camera (see [Camera setup](#camera-setup-windows)) and shows its live 
 ### `pseyosc-track`: tracking test
 
 ```
-build\Release\pseyosc-track.exe [--exposure 0.3] [--no-mirror]
+build\Release\pseyosc-track.exe [--exposure 0.3] [--mirror]
 ```
 
 Tracks the orbs of all controllers connected over Bluetooth (pair them with `pseyosc-pair` first and press PS; no other pseyosc tool may be running) with psmoveapi's tracker. Each orb blinks briefly while the tracker learns its color in the camera image; then the window shows the darkened camera image with the tracked orbs, and the terminal prints their positions ten times a second:
@@ -112,4 +112,4 @@ Tracks the orbs of all controllers connected over Bluetooth (pair them with `pse
 [0] x  312.4 y  201.7 r  14.2 px,   93 cm
 ```
 
-`x`/`y` is the orb's center in the image and `r` its radius, in pixels; the distance from the camera is estimated from the radius, and is calibrated by psmoveapi for the lens's wide-angle setting (blue dot). The numbers `[0]`, `[1]` are psmoveapi's order of the controllers, not `pseyosc-stream`'s ids. R calibrates again (e.g. after the lighting changed), Esc or Ctrl+C quits. `--exposure` (0-1) sets the camera's fixed exposure: lower values leave less but the orbs visible. The window title shows the measured frame rate. The camera supports up to 75 Hz at 640x480 and 187 Hz at 320x240 (higher requests are capped); other rates become the next lower one it supports (e.g. 60, 50, 40, 30 at 640x480). Esc, closing the window, or Ctrl+C quits.
+`x`/`y` is the orb's center in the image and `r` its radius, in pixels; the distance from the camera is estimated from the radius, and is calibrated by psmoveapi for the lens's wide-angle setting (blue dot). The numbers `[0]`, `[1]` are psmoveapi's order of the controllers, not `pseyosc-stream`'s ids. R calibrates again (e.g. after the lighting changed), Esc or Ctrl+C quits. `--exposure` (0-1) sets the camera's fixed exposure: lower values leave less but the orbs visible. The image is shown as the camera sees it, like `pseyosc-video`; `--mirror` flips it horizontally, like a mirror (positions included). The window title shows the measured frame rate. The camera supports up to 75 Hz at 640x480 and 187 Hz at 320x240 (higher requests are capped); other rates become the next lower one it supports (e.g. 60, 50, 40, 30 at 640x480). Esc, closing the window, or Ctrl+C quits.

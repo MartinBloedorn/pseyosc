@@ -37,9 +37,9 @@ struct Controller {
 
 void printUsage()
 {
-    std::printf("usage: pseyosc-track [--exposure <0-1>] [--no-mirror]\n"
+    std::printf("usage: pseyosc-track [--exposure <0-1>] [--mirror]\n"
                 "  --exposure <0-1>  camera exposure (default 0.3); lower makes everything but the orbs darker\n"
-                "  --no-mirror       shows the camera image as the camera sees it, not mirrored\n");
+                "  --mirror          mirrors the camera image (and the x positions), like a mirror facing you\n");
 }
 
 /*! \brief Blinks the controller's orb to learn its color in the camera image, and starts tracking it. */
@@ -103,8 +103,8 @@ int main(int argc, char **argv)
                 printUsage();
                 return 1;
             }
-        } else if (std::strcmp(argv[i], "--no-mirror") == 0) {
-            settings.camera_mirror = false;
+        } else if (std::strcmp(argv[i], "--mirror") == 0) {
+            settings.camera_mirror = true; // flipped by the camera (PS3EYEDriver); psmoveapi's default is false
         } else {
             printUsage();
             return 1;
