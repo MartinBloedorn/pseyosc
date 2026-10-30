@@ -88,3 +88,41 @@ target_link_libraries(pseyosc-stream PRIVATE hub osc)
 if(WIN32)
     target_compile_definitions(pseyosc-stream PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)
 endif()
+
+# Camera: PS3EYEDriver talks to the PS3 Eye directly over libusb (psmoveapi's camera driver on Windows). Both are
+# psmoveapi submodules; libusb is built from source like hidapi. The viewer's window is Win32, so Windows only for now.
+if(WIN32)
+    set(LIBUSB_DIR ${PSMOVEAPI_DIR}/external/libusb-1.0)
+    set(PS3EYEDRIVER_DIR ${PSMOVEAPI_DIR}/external/PS3EYEDriver)
+    if(NOT EXISTS ${LIBUSB_DIR}/libusb/libusb.h OR NOT EXISTS ${PS3EYEDRIVER_DIR}/src/ps3eye.h)
+        message(FATAL_ERROR "libusb or PS3EYEDriver not found, run 'git submodule update --init --recursive'")
+    endif()
+
+    # The sources of libusb's msvc/libusb_static.vcxproj, without hotplug support.
+    add_library(libusb STATIC
+        ${LIBUSB_DIR}/libusb/core.c
+        ${LIBUSB_DIR}/libusb/descriptor.c
+        ${LIBUSB_DIR}/libusb/hotplug.c
+        ${LIBUSB_DIR}/libusb/io.c
+        ${LIBUSB_DIR}/libusb/strerror.c
+        ${LIBUSB_DIR}/libusb/sync.c
+        ${LIBUSB_DIR}/libusb/os/events_windows.c
+        ${LIBUSB_DIR}/libusb/os/threads_windows.c
+        ${LIBUSB_DIR}/libusb/os/windows_common.c
+        ${LIBUSB_DIR}/libusb/os/windows_usbdk.c
+        ${LIBUSB_DIR}/libusb/os/windows_winusb.c)
+    target_include_directories(libusb PUBLIC ${LIBUSB_DIR}/libusb PRIVATE ${LIBUSB_DIR}/msvc)
+    target_compile_definitions(libusb PRIVATE _WIN32_WINNT=_WIN32_WINNT_VISTA _CRT_SECURE_NO_WARNINGS)
+
+    add_library(ps3eye STATIC ${PS3EYEDRIVER_DIR}/src/ps3eye.h ${PS3EYEDRIVER_DIR}/src/ps3eye.cpp)
+    target_include_directories(ps3eye PUBLIC ${PS3EYEDRIVER_DIR}/src)
+    target_link_libraries(ps3eye PUBLIC libusb)
+    if(MSVC)
+        # As in psmoveapi: PS3EYEDriver uses timeval, which newer libusb headers no longer provide.
+        target_compile_options(ps3eye PRIVATE /FIwinsock2.h /W1)
+    endif()
+
+    add_executable(pseyosc-video src/video/main.cpp)
+    target_link_libraries(pseyosc-video PRIVATE ps3eye)
+    target_compile_definitions(pseyosc-video PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)
+endif()

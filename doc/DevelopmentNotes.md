@@ -18,12 +18,14 @@ Last updated: 2026-10-30.
 | `--shutdown-on-exit`, `--idle-timeout` (drop the Bluetooth link, Windows only) | ✅ works (user-confirmed): the controller switches off, PS brings it back |
 | Linux, macOS | ⏳ CMake written, never built |
 | `pseyosc-stream` (OSC): status, buttons, trigger, accel, gyro, battery; rumble and LED input | ✅ streams from a ZCM1 (~90 reports/s); LED/rumble input user-confirmed; rumble intensities map onto the motor's working range 128–255 ([Streaming.md](Streaming.md#status)) |
-| Sensor fusion (`move/rpy`, `move/quat` are placeholders), magnetometer, camera | ⏳ not started |
+| `pseyosc-video`: live camera image in a Win32 window (PS3EYEDriver + libusb) | ✅ PS3 Eye with WinUSB: 640x480 at 58 fps measured (60 Hz requested) and 69 fps (75 Hz), 320x240 at 186 fps (187 Hz); image quality to be checked by eye |
+| Sensor fusion (`move/rpy`, `move/quat` are placeholders), magnetometer, camera tracking | ⏳ not started |
 
 **Development hardware** (user's machine, Windows 10, VS 2022, CMake 3.30):
 
 - Radio: Intel Wireless Bluetooth, `44:85:00:BF:B6:D8`.
 - Move controller CECH-ZCM1E (PS3 model, USB PID `0x03d5`): `00:13:8A:9A:FE:2E`. Before pseyosc, it was paired with `A8:47:4A:EC:B6:BE` (probably a PlayStation).
+- PS3 Eye camera (USB `1415:2000`), WinUSB installed on interface 0 with Zadig 2.9.
 
 ## 2. Layout & build
 
@@ -33,8 +35,10 @@ src/hub/       MoveHub + AbstractHubListener: USB pairing, Bluetooth pickup, thr
 src/pairtool/  pseyosc-pair: listener that prints button presses + CLI
 src/osc/       OscSender / OscReceiver: copied unchanged from wiimosc
 src/stream/    pseyosc-stream: MoveStreamer (listener → OSC, OSC input → rumble/LED) + CLI
+src/video/     pseyosc-video: camera viewer (PS3EYEDriver capture thread + Win32 window); Windows only
 tools/         oscdump.py, oscsend.py, oscrate.py (copied from wiimosc)
-external/psmoveapi/  thp/psmoveapi (BSD), submodule, PATCHED (see §4); only its hidapi submodule is needed
+external/psmoveapi/  thp/psmoveapi (BSD), submodule, PATCHED (see §4); of its submodules, hidapi (controllers),
+                     libusb-1.0 and PS3EYEDriver (camera) are needed; glm is part of its tree
 doc/           Streaming.md, this file
 ```
 
@@ -54,6 +58,15 @@ doc/           Streaming.md, this file
 - **Switching controllers off.** A Move has no power button. Unconnected, it gives up after a few seconds of trying and switches off; connected, it stays on (the status LED stayed lit after quitting `pseyosc-pair`, which only closes the HID handle). A PlayStation switches it off by dropping the link, so the hub does the same (`BluetoothLink`: `IOCTL_BTH_DISCONNECT_DEVICE` on the radio, ported from wiimosc; no Administrator rights needed). With `--shutdown-on-exit` the device thread switches the orb off and drops the link when quitting; with `--idle-timeout` it drops it after that long without button or trigger changes, and ends right away (a dropped link isn't otherwise noticed for 3 s: `psmove_poll()` returns 0 for read errors and for no data alike). Motion doesn't count as activity yet; the accelerometer/gyro noise thresholds still need measuring. macOS and Linux: not implemented (`BluetoothLink_other.cpp` returns false).
 - psmoveapi's `moved` remote controllers are disabled (`psmove_set_remote_config(PSMove_OnlyLocal)`), so it doesn't try to reach a daemon.
 
+## 3b. Camera: findings and decisions
+
+- **psmoveapi's image pipeline** (`src/tracker/`, not built yet) has three layers: a camera driver per platform (`CameraControl`: PS3EYEDriver on Windows, V4L2 on Linux, AVFoundation or PS3EYEDriver on macOS) delivering BGR frames; the tracker (needs OpenCV 4: blinking color calibration of each orb, then per frame HSV threshold → biggest contour → circle fit within a region of interest, giving pixel x/y and radius, distance from the radius); and `psmove_fusion` (3D position from the PS Eye's field of view, 75° on the lens's blue dot, 56° on the red dot). The tracker sets the orbs' colors itself, and isn't thread-safe; both clash with MoveHub's design (orb = id color, `PSMove` owned by its device thread), to be decided when adding tracking.
+- **psmoveapi has no DirectShow/Media Foundation driver**: on Windows the camera is read with PS3EYEDriver over libusb, which needs WinUSB on the camera's interface 0 (Zadig; see the README). Without a driver, Windows lists that interface with an error; interface 1 (microphone array) uses `usbaudio` and keeps working. PS3EYEDriver only lists cameras libusb can open, so without WinUSB it finds none.
+- **Build**: libusb and PS3EYEDriver are built from source as static targets (`libusb`: the sources of libusb's `msvc/libusb_static.vcxproj`, without hotplug; `ps3eye`: `ps3eye.cpp` with `/FIwinsock2.h`, as in psmoveapi, for `timeval`). pseyosc uses PS3EYEDriver's C++ class `ps3eye::PS3EYECam` directly, not psmoveapi's `CameraControl` (which needs OpenCV's C API). OpenCV is postponed: the user decides later how to bring it in. The user's environment has `OpenCV_DIR` pointing to an OpenCV 3.1 install that doesn't exist anymore; the tracker needs OpenCV 4.
+- **PS3EYEDriver**: `getFrame()` blocks until the next frame (no timeout); its own thread handles the libusb events. `init()` opens 640x480 for any size above 320x240. Frame rates: it takes the highest supported rate at or below the request; above 75 Hz (640x480) and 187 Hz (320x240) its table notes "video is partly corrupt", so `pseyosc-video` caps requests there. Its defaults are manual gain/exposure/white balance; the viewer switches the automatic ones on, tracking will need them off with a low exposure (psmoveapi: auto gain/white balance off, gain 0, exposure 0.3 of the maximum).
+- **License**: PS3EYEDriver is MIT, but based on GPL'd code (psmoveapi marks builds with it as GPL).
+- **Viewer**: a capture thread copies each frame into the window's buffer (under a mutex) and invalidates it; the window thread paints it with `StretchDIBits` (24-bit top-down DIB, BGR as delivered), scaled to the client area. The message loop also polls the Ctrl+C flag and shows the measured frame rate in the title. Quitting waits for the capture thread's next frame, so an unplugged camera would hang it (not handled yet). Killing the process without `stop()` left the camera usable on the next start.
+
 ## 4. psmoveapi patches
 
 `external/psmoveapi` is modified locally; every change is marked with `pseyosc patch`. They are committed on the submodule's `master` (`5702bee`), but only locally: `.gitmodules` still points to upstream `thp/psmoveapi`. Once the user has forked it, point `.gitmodules` to the fork, and push the fork before pseyosc (as for wiimosc's wiiuse fork).
@@ -67,4 +80,4 @@ doc/           Streaming.md, this file
 3. Magnetometer calibration (psmoveapi warns "not yet calibrated"; it has a `magnetometer_calibration` utility).
 4. Add motion to the idle check once the sensor noise is measured.
 5. Linux and macOS builds.
-6. The PS3 Eye camera.
+6. The PS3 Eye camera: decide how to bring in OpenCV 4 (needed by psmoveapi's tracker), then tracking (orb positions to OSC), resolving the orb color and threading clashes noted in §3b. Linux/macOS viewer.
