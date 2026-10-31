@@ -34,8 +34,10 @@ target_include_directories(psmoveapi
         ${CMAKE_BINARY_DIR}/psmoveapi
     PRIVATE
         ${PSMOVEAPI_DIR}/external/glm)
-# PSMOVE_STATIC is a local patch of psmove.h: without it, the header declares dllimport on Windows.
-target_compile_definitions(psmoveapi PUBLIC PSMOVE_STATIC)
+# Upstream only builds a DLL: on Windows, psmove.h declares its functions dllimport unless BUILDING_SHARED_LIBRARY is
+# set, which fails with a static library. With it, they're dllexport everywhere: that links, and only gives the
+# executables an export table (and a .lib/.exp next to them).
+target_compile_definitions(psmoveapi PUBLIC BUILDING_SHARED_LIBRARY)
 if(WIN32)
     target_sources(psmoveapi PRIVATE
         ${PSMOVEAPI_DIR}/external/hidapi/windows/hid.c
@@ -174,6 +176,9 @@ if(WIN32)
         target_link_libraries(psmoveapi_tracker PUBLIC psmoveapi ps3eye ${OpenCV_LIBS})
         target_compile_definitions(psmoveapi_tracker PRIVATE WIN32_LEAN_AND_MEAN _USE_MATH_DEFINES NOMINMAX
                                                              _CRT_SECURE_NO_DEPRECATE)
+        # psmove_tracker_update_image() mirrors in software unless this is defined, which upstream never does;
+        # PS3EYEDriver already mirrors in hardware, so the image would be flipped twice (i.e. not mirrored).
+        target_compile_definitions(psmoveapi_tracker PRIVATE CAMERA_CONTROL_USE_PS3EYE_DRIVER)
         if(MSVC)
             # C4244: psmove_tracker.cpp stores double HSV values as floats.
             target_compile_options(psmoveapi_tracker PRIVATE /Zc:preprocessor /W1 /wd4244)

@@ -6,7 +6,7 @@ You are working on pseyosc, a cross-platform utility that handles Playstation 3 
 
 ../wiimosc is a project that achieves something similar but for Wiimotes. It can be used as an overall reference for what is being attempted here (given the differences between controllers).
 
-Read doc/DevelopmentNotes.md first: it collects the technical decisions, findings, psmoveapi patches and open work.
+Read doc/DevelopmentNotes.md first: it collects the technical decisions, findings, psmoveapi workarounds and open work.
 
 # Coding
 
