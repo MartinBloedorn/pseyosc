@@ -28,6 +28,7 @@ const float sRadiansToDegrees = 57.29577951f;
 const float sMaxRumblePulseMs = 3000.0f;
 const char sRumblePath[] = "move/rumble/";
 const char sLedPath[] = "move/led";
+const char sHintPath[] = "move/hint/";
 /*! \brief Ignored addresses are printed once each, up to this many. */
 const size_t sMaxIgnoredAddresses = 64;
 
@@ -160,6 +161,18 @@ void MoveStreamer::updateFusion(int id, PSMove *move, int sequence)
     if (!device.fusion)
         return;
 
+    // Taken on every report, so a hint that arrives before the fusion is ready is dropped, not applied later.
+    bool isYawHinted;
+    float hintYaw, hintStrength;
+    {
+        std::lock_guard<std::mutex> lock(mRequestMutex);
+        Request &request = mRequests[id];
+        isYawHinted = request.isYawHinted;
+        hintYaw = request.hintYaw;
+        hintStrength = request.hintStrength;
+        request.isYawHinted = false;
+    }
+
     // psmoveapi's sensor axes are the body frame (fusion/Orientation.h), verified on a ZCM1.
     Vector3 gyro[2], accel[2];
     for (int i = 0; i < 2; ++i) {
@@ -171,6 +184,8 @@ void MoveStreamer::updateFusion(int id, PSMove *move, int sequence)
         gyro[i] = Vector3{x * sRadiansToDegrees, y * sRadiansToDegrees, z * sRadiansToDegrees};
     }
     device.fusion->addReport(seconds(Clock::now()), sequence, gyro, accel);
+    if (isYawHinted)
+        device.fusion->hintYaw(hintYaw, hintStrength);
 
     const bool isReady = device.fusion->isReady();
     if (isReady && !device.wasFusionReady) {
@@ -271,7 +286,8 @@ void MoveStreamer::received(const OscReceivedMessage &message)
 
     const bool isRumble = path.compare(0, sizeof(sRumblePath) - 1, sRumblePath) == 0;
     const bool isLed = path == sLedPath;
-    if (!isRumble && !isLed)
+    const bool isHint = path.compare(0, sizeof(sHintPath) - 1, sHintPath) == 0;
+    if (!isRumble && !isLed && !isHint)
         return ignore(message, "unknown address");
     if (id >= MoveHub::sMaxDevices)
         return ignore(message, "id out of range");
@@ -280,6 +296,8 @@ void MoveStreamer::received(const OscReceivedMessage &message)
             return ignore(message, "the orb's color is set by the tracker (--track)");
         return receivedLed(id, message);
     }
+    if (isHint)
+        return receivedHint(id, path.substr(sizeof(sHintPath) - 1), message);
     receivedRumble(id, path.substr(sizeof(sRumblePath) - 1), message);
 }
 
@@ -323,6 +341,24 @@ void MoveStreamer::receivedLed(int id, const OscReceivedMessage &message)
     std::lock_guard<std::mutex> lock(mRequestMutex);
     for (int i = 0; i < 3; ++i)
         mRequests[id].led[i] = toByte(rgb[i]);
+}
+
+void MoveStreamer::receivedHint(int id, const std::string &command, const OscReceivedMessage &message)
+{
+    if (command != "yaw")
+        return ignore(message, "unknown address");
+    if (mOptions.filter == FilterType::None)
+        return ignore(message, "needs --fusion");
+    float yaw;
+    float strength = 1.0f;
+    if (!message.toFloat(0, &yaw) || !std::isfinite(yaw)
+        || (message.arguments.size() > 1 && (!message.toFloat(1, &strength) || !std::isfinite(strength))))
+        return ignore(message, "expects a yaw (degrees) and optionally a strength (0-1)");
+    std::lock_guard<std::mutex> lock(mRequestMutex);
+    Request &request = mRequests[id];
+    request.isYawHinted = true;
+    request.hintYaw = yaw;
+    request.hintStrength = strength;
 }
 
 void MoveStreamer::ignore(const OscReceivedMessage &message, const char *reason)

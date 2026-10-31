@@ -22,6 +22,7 @@ Last updated: 2026-10-30.
 | `pseyosc-track`: psmoveapi's tracker (OpenCV 4 from `../lib/opencv`), positions printed | ✅ user-confirmed: calibration and tracking work out of the box with one ZCM1; `--mirror` too |
 | `pseyosc-stream --track`: tracking thread, calibration on join and on Select + Start, `track/found`, `track/pos` (cm, pinhole model), `track/xyz` (−1–1, z 0–1 of the tracking range) | ✅ user-confirmed with one controller (calibration, hue, mirror, positions and their scale); several controllers and `fov=` not yet ([Streaming.md](Streaming.md#status)) |
 | Sensor fusion (`--fusion`: 6-DoF, Fusion as in wiimosc) | ✅ user-confirmed live on a ZCM1, including the Select + Start restart; axes and angle signs verified (§3c) |
+| Yaw hints (`move/hint/yaw <yaw> [strength]` over `--in-port`, as in wiimosc) | ✅ on a resting ZCM1 (set, wrap, steps, clamping; scripted). ⏳ pitch gate, while moving |
 | Magnetometer (9-DoF) | ⏳ not started |
 
 **Development hardware** (user's machine, Windows 10, VS 2022, CMake 3.30):
@@ -82,7 +83,7 @@ doc/           Streaming.md, this file
 ## 3c. Sensor fusion: findings and decisions
 
 - **psmoveapi's own fusion** (`psmove_enable_orientation()`, `psmove_orientation.cpp`) was not used: its default on a ZCM1 is a complementary 9-DoF filter that needs a magnetometer calibration file per controller (without it, the reference direction is a zero vector), blends towards accelerometer and magnetometer at a fixed rate even while the controller is swung, doesn't estimate the gyro's bias, and is unmaintained. Instead, wiimosc's fusion (xioTechnologies Fusion) was copied, so both projects stream the same thing; a copy (not a shared library) was the user's choice, since Fusion needed no patches in wiimosc and is small.
-- **Copied from wiimosc** (`src/fusion`): `MadgwickFilter` unchanged apart from comments, `AbstractOrientationFilter`, `Orientation` (reduced to `toEulerAngles()`/`tiltFromGravity()`), and `MotionFusion` rewritten for the Move: no MotionPlus calibration (psmoveapi already returns g and rad/s from the factory calibration), no IR anchors or yaw hints (yet), two samples per report.
+- **Copied from wiimosc** (`src/fusion`): `MadgwickFilter` unchanged apart from comments, `AbstractOrientationFilter`, `Orientation` (without `rotate()`), and `MotionFusion` rewritten for the Move: no MotionPlus calibration (psmoveapi already returns g and rad/s from the factory calibration), no IR anchors, two samples per report. Yaw hints (`move/hint/yaw`) are wiimosc's, minus the 1 s hold that overrules the anchors: same strength semantics, 80° pitch gate, dropped before the fusion is ready; a restart clears the offset.
 - **Axes**: psmoveapi's sensor axes are the body frame as they are: x right, y towards the orb, z out of the buttons' face, right-handed, gyro right-handed about them. Verified with pose captures: orb up → accel y ≈ 1.02; lying on its right / left side → x ≈ −0.51 / +0.55 with z ≈ 0.84; lifting the orb → gyro x +86 deg/s; rolling from right to left → gyro y −92 deg/s. (A first guess from psmoveapi's "OpenGL" sensor transform, `(x, z, −y)`, was wrong.)
 - **Angles**: unlike wiimosc (whose roll keeps wiiuse's accelerometer sign, `roll = −φ`), pseyosc's roll, pitch and yaw are all right-handed rotations about the body axes: roll positive rolling right, pitch positive up, yaw positive left. Whether that matches wiimosc's roll sign hasn't been compared with a Wiimote.
 - **Timing**: a ZCM1 sends 87–89 reports/s, two samples each. dt comes from the rate measured at rest and the `psmove_poll()` sequence numbers (passed to the listener's `update()`), not from arrival times (details in Streaming.md, Implementation). The ZCM1's own report timestamp isn't exposed by psmoveapi.
@@ -99,7 +100,7 @@ doc/           Streaming.md, this file
 ## 5. Open work
 
 1. The open items in [Streaming.md](Streaming.md#status) (battery flicker; fusion with several controllers, compared with wiimosc).
-2. Sensor fusion: 9-DoF with the magnetometer for yaw (Fusion's `FusionAhrsUpdate` with magnetic rejection; needs a hard/soft-iron calibration, psmoveapi has a `magnetometer_calibration` utility); tuning on recordings as in wiimosc; the gyro's range; yaw hints (`move/hint/yaw`) as in wiimosc.
+2. Sensor fusion: 9-DoF with the magnetometer for yaw (Fusion's `FusionAhrsUpdate` with magnetic rejection; needs a hard/soft-iron calibration, psmoveapi has a `magnetometer_calibration` utility); tuning on recordings as in wiimosc; the gyro's range.
 4. Add motion to the idle check once the sensor noise is measured.
 5. Linux and macOS builds.
 6. The PS3 Eye camera: confirm `--track` on hardware ([Streaming.md](Streaming.md#status)); 3D positions (`psmove_fusion`); Linux/macOS viewer and tracker.

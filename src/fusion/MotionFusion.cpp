@@ -19,6 +19,8 @@ const float sRestGyroSpread = 4.0f;
 const float sRestAccelSpread = 0.1f;
 /*! \brief psmove_poll()'s sequence numbers count from 1 to 16. */
 const int sSequenceLength = 16;
+/*! \brief Yaw hints are ignored above this pitch (deg, up or down). */
+const float sMaxHintPitch = 80.0f;
 
 float magnitude(const Vector3 &v)
 {
@@ -50,6 +52,7 @@ void MotionFusion::restart()
     mHasSequence = false;
     mStartTime = -1.0;
     mWindowSamples = 0;
+    mYawOffset = 0.0f;
 }
 
 void MotionFusion::addReport(double time, int sequence, const Vector3 gyro[2], const Vector3 accel[2])
@@ -90,11 +93,22 @@ void MotionFusion::addReport(double time, int sequence, const Vector3 gyro[2], c
     }
 }
 
+bool MotionFusion::hintYaw(float yaw, float strength)
+{
+    if (!mIsReady)
+        return false;
+    const EulerAngles angles = toEulerAngles(orientation());
+    if (std::fabs(angles.pitch) > sMaxHintPitch)
+        return false;
+    mYawOffset = wrapDegrees(mYawOffset + std::clamp(strength, 0.0f, 1.0f) * wrapDegrees(yaw - angles.yaw));
+    return true;
+}
+
 Quaternion MotionFusion::orientation() const
 {
     if (!mIsReady)
         return Quaternion{};
-    return mFilter->orientation();
+    return mYawOffset == 0.0f ? mFilter->orientation() : multiply(yawRotation(mYawOffset), mFilter->orientation());
 }
 
 bool MotionFusion::collectRest(double time, int reports, const Vector3 gyro[2], const Vector3 accel[2])

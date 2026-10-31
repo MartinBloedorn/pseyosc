@@ -26,8 +26,8 @@ struct OscReceivedMessage;
     With sensor fusion (Options::filter), each controller gets a MotionFusion: once it's ready, move/rpy and move/quat
     carry its orientation. Pressing Select and Start together restarts it (yaw 0 is then the current heading).
 
-    It also takes OSC input (received()): <prefix>/<id>/move/rumble/{trigger,pulse} set a controller's rumble, and
-    <prefix>/<id>/move/led its orb color.
+    It also takes OSC input (received()): <prefix>/<id>/move/rumble/{trigger,pulse} set a controller's rumble,
+    <prefix>/<id>/move/led its orb color, and <prefix>/<id>/move/hint/yaw moves its fused yaw.
 
     With a tracker (setTracker()), it adds the controllers to it as they connect, streams their tracked positions
     (<prefix>/<id>/track/found, <prefix>/<id>/track/pos, <prefix>/<id>/track/xyz), and sets the orb colors the
@@ -82,7 +82,7 @@ private:
         Clock::time_point nextPosition;
     };
 
-    /*! \brief A controller's rumble and orb color, as last requested over OSC.
+    /*! \brief A controller's rumble, orb color and yaw hint, as last requested over OSC.
 
         Each rumble request replaces the previous one, so a trigger cuts a pulse short and vice versa.
      */
@@ -91,6 +91,9 @@ private:
         bool isPulse = false;       //!< switches off at pulseEnd
         Clock::time_point pulseEnd;
         int led[3] = {-1, -1, -1};  //!< 0-255 each; -1 not requested (or already applied)
+        bool isYawHinted = false;   //!< a move/hint/yaw not yet applied
+        float hintYaw = 0.0f;
+        float hintStrength = 1.0f;
     };
 
     std::string address(int id, const char *path) const;
@@ -101,9 +104,9 @@ private:
     /*! \brief Sends the value as int, if it differs from the one last sent on \a path. */
     void sendInt(int id, const char *path, int value);
 
-    /*! rief Feeds the report's motion samples to the controller's fusion. */
+    /*! \brief Feeds the report's motion samples to the controller's fusion, and applies a pending yaw hint. */
     void updateFusion(int id, PSMove *move, int sequence);
-    /*! rief Requests a rumble pulse, as if received over OSC. */
+    /*! \brief Requests a rumble pulse, as if received over OSC. */
     void requestPulse(int id, int rumble, int durationMs);
 
     void applyRequest(int id, PSMove *move);
@@ -111,6 +114,8 @@ private:
     void receivedRumble(int id, const std::string &command, const OscReceivedMessage &message);
     /*! \brief Handles <prefix>/<id>/move/led. Called from the receiver's thread. */
     void receivedLed(int id, const OscReceivedMessage &message);
+    /*! \brief Handles <prefix>/<id>/move/hint/<command>. Called from the receiver's thread. */
+    void receivedHint(int id, const std::string &command, const OscReceivedMessage &message);
     /*! \brief Prints why \a message is ignored, once per address. Called from the receiver's thread. */
     void ignore(const OscReceivedMessage &message, const char *reason);
 

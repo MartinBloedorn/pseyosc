@@ -15,7 +15,8 @@ bool parseFilterType(const char *name, FilterType *type);
 /*! \brief Turns a controller's input reports into an orientation, with one AbstractOrientationFilter.
 
     It first waits for the controller to lie still for a moment, to measure the gyro's bias, the gravity (which gives
-    the initial pitch and roll) and the report rate. The filter then starts with yaw 0.
+    the initial pitch and roll) and the report rate. The filter then starts with yaw 0, until yaw hints (hintYaw())
+    correct it, by shifting a yaw offset on top of the filter's orientation.
 
     Each report holds two samples. Their time step comes from the report rate measured at rest, and the reports'
     sequence numbers, which count lost reports: the host's time of arrival is uneven, and reports queue up while the
@@ -36,9 +37,17 @@ public:
      */
     void addReport(double time, int sequence, const Vector3 gyro[2], const Vector3 accel[2]);
 
+    /*! \brief Moves the yaw towards \a yaw (deg, as move/rpy's) by the share \a strength (0-1); 1 sets it.
+
+        Ignored until ready, and while pointing nearly straight up or down, where yaw is ill-defined. Returns whether
+        it's applied.
+     */
+    bool hintYaw(float yaw, float strength);
+
     /*! \brief Whether the bias is measured, and orientation() valid. */
     bool isReady() const { return mIsReady; }
     const FilterSetup &setup() const { return mSetup; }
+    /*! \brief The filter's orientation, with the yaw offset. */
     Quaternion orientation() const;
 
 private:
@@ -52,6 +61,7 @@ private:
     double mStartTime = -1.0; //!< time of the first report since restart(); -1: none yet
     FilterSetup mSetup;
     float mReportPeriod = 0.0f; //!< seconds, measured at rest
+    float mYawOffset = 0.0f;    //!< degrees of yaw added to the filter's, by yaw hints
 
     // The rest window: sums and ranges of the samples since it began.
     double mWindowStart = 0.0;

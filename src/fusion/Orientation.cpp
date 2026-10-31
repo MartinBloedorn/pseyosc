@@ -41,3 +41,25 @@ Quaternion tiltFromGravity(const Vector3 &gravity)
     const float sr = std::sin(0.5f * roll);
     return Quaternion{cp * cr, sp * cr, cp * sr, sp * sr};
 }
+
+Quaternion multiply(const Quaternion &a, const Quaternion &b)
+{
+    return Quaternion{a.w * b.w - a.x * b.x - a.y * b.y - a.z * b.z, a.w * b.x + a.x * b.w + a.y * b.z - a.z * b.y,
+                      a.w * b.y - a.x * b.z + a.y * b.w + a.z * b.x, a.w * b.z + a.x * b.y - a.y * b.x + a.z * b.w};
+}
+
+Quaternion yawRotation(float degrees)
+{
+    const float half = 0.5f * degrees / sRadToDeg;
+    return Quaternion{std::cos(half), 0.0f, 0.0f, std::sin(half)};
+}
+
+float wrapDegrees(float degrees)
+{
+    degrees = std::fmod(degrees, 360.0f);
+    if (degrees > 180.0f)
+        degrees -= 360.0f;
+    else if (degrees <= -180.0f)
+        degrees += 360.0f;
+    return degrees;
+}
