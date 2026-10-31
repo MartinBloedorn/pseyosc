@@ -165,7 +165,22 @@ if(WIN32)
         add_executable(pseyosc-track src/track/main.cpp)
         target_link_libraries(pseyosc-track PRIVATE psmoveapi_tracker)
     else()
-        message(WARNING "OpenCV 4 not found in PSEYOSC_OPENCV_DIR (${PSEYOSC_OPENCV_DIR}): pseyosc-track isn't built. "
-                        "Build it with lib/opencv/build.sh, or set PSEYOSC_OPENCV_DIR to an OpenCV install folder.")
+        message(WARNING "OpenCV 4 not found in PSEYOSC_OPENCV_DIR (${PSEYOSC_OPENCV_DIR}): pseyosc-track and "
+                        "pseyosc-stream's --track aren't built. Build it with lib/opencv/build.sh, or set "
+                        "PSEYOSC_OPENCV_DIR to an OpenCV install folder.")
     endif()
 endif()
+
+# Camera tracking for pseyosc-stream (--track); without psmoveapi's tracker, a stub whose start() fails.
+if(TARGET psmoveapi_tracker)
+    add_library(tracking STATIC src/tracking/MoveTracker.h src/tracking/MoveTracker.cpp)
+    target_link_libraries(tracking PRIVATE psmoveapi_tracker)
+else()
+    add_library(tracking STATIC src/tracking/MoveTracker.h src/tracking/MoveTracker_none.cpp)
+endif()
+target_include_directories(tracking PUBLIC src)
+target_link_libraries(tracking PUBLIC hub)
+if(WIN32)
+    target_compile_definitions(tracking PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)
+endif()
+target_link_libraries(pseyosc-stream PRIVATE tracking)

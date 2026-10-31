@@ -28,10 +28,21 @@ public:
         Called after the connection rumble has ended, so the listener may set the rumble right away.
      */
     virtual void connected(int id, PSMove *move, const std::string &address) {}
+    /*! \brief The controller is gone, or the hub stops. Called before \a move is closed. */
     virtual void disconnected(int id) {}
 
-    /*! \brief Called after each new input report of a connected controller (psmove_poll() returned data). */
+    /*! \brief Called after each new input report of a connected controller (psmove_poll() returned data).
+
+        Only for reading input: the controller's output (LEDs, rumble) belongs into updateOutput().
+     */
     virtual void update(int id, PSMove *move) {}
+
+    /*! \brief The place to set the controller's output: psmove_set_leds(), psmove_set_rumble().
+
+        Called on every iteration of the controller's loop, holding the hub's output mutex (see
+        MoveHub::setOutputMutex()); skipped while someone else holds it. The hub sends the output afterwards.
+     */
+    virtual void updateOutput(int id, PSMove *move) {}
 };
 
 /*! \brief Pairs controllers plugged in over USB, picks up controllers connected over Bluetooth, and gives
@@ -93,6 +104,14 @@ public:
         mIdleTimeout = std::chrono::milliseconds(static_cast<long long>(minutes * 60000.0));
     }
 
+    /*! \brief Shares the mutex that guards the controllers' output (LEDs, rumble) with someone else using the
+        controllers' handles, e.g. the camera tracker. Must be called before start().
+
+        The controller threads hold it while setting and sending their output; while someone else holds it, they skip
+        their output, but keep reading input. By default, the hub uses a mutex of its own.
+     */
+    void setOutputMutex(std::mutex *mutex) { mOutputMutex = mutex; }
+
     /*! \brief Reads the host's Bluetooth address, and starts pairing and picking up controllers in the background.
 
         Fails without a Bluetooth radio. Without the rights to pair (Windows: Administrator), only controllers paired
@@ -135,6 +154,8 @@ private:
     bool mIsRepairing = false;
     bool mIsShuttingDownOnExit = false;
     std::chrono::milliseconds mIdleTimeout{0}; //!< 0: never
+    std::mutex mOwnOutputMutex;
+    std::mutex *mOutputMutex = &mOwnOutputMutex; //!< see setOutputMutex()
 
     std::mutex mMutex; //!< guards mSlots
     Slot mSlots[sMaxDevices];

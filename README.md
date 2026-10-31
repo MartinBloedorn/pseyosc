@@ -2,7 +2,7 @@
 
 Cross-platform utility that pairs PlayStation Move motion controllers (and later handles the PlayStation 3 Eye camera), and turns their input into OSC messages.
 
-> **Status:** early. `pseyosc-pair` (pairing & testing) and `pseyosc-stream` (OSC) work on Windows with a CECH-ZCM1E controller; no sensor fusion yet (orientation is a placeholder). `pseyosc-video` shows the PS3 Eye camera's live image, and `pseyosc-track` tracks the controllers' orbs with it (Windows only so far; positions aren't streamed as OSC yet). See [doc/Streaming.md](doc/Streaming.md). See [doc/DevelopmentNotes.md](doc/DevelopmentNotes.md).
+> **Status:** early. `pseyosc-pair` (pairing & testing) and `pseyosc-stream` (OSC) work on Windows with a CECH-ZCM1E controller; no sensor fusion yet (orientation is a placeholder). `pseyosc-video` shows the PS3 Eye camera's live image, and `pseyosc-track` tracks the controllers' orbs with it (Windows only so far); `pseyosc-stream --track` streams the tracked positions. See [doc/Streaming.md](doc/Streaming.md). See [doc/DevelopmentNotes.md](doc/DevelopmentNotes.md).
 
 ## How pairing works
 
@@ -65,7 +65,7 @@ This pairs and connects controllers like `pseyosc-pair` (it takes the same optio
 /pseyosc/0/battery             0.8
 ```
 
-With `--in-port`, it also takes `/pseyosc/0/move/rumble/trigger 0.5`, `.../rumble/pulse 1 300` and `/pseyosc/0/move/led 0 0.5 1` (orb color). `move/rpy` and `move/quat` are placeholders until sensor fusion is added. See [doc/Streaming.md](doc/Streaming.md) for all addresses and options. To check the output: `python tools/oscdump.py 4321 20`.
+With `--track`, it also tracks the orbs with the camera and streams `/pseyosc/0/track/found` (0/1) and `/pseyosc/0/track/pos` (x, y, z in cm from the lens: z out of the lens, y up, x to the camera's left) and `/pseyosc/0/track/xyz` (the same, as x, y −1–1 across the image and z 0–1 of the tracking range, for pointing); controllers are calibrated when they connect, and again when Select and Start are pressed together. With `--in-port`, it also takes `/pseyosc/0/move/rumble/trigger 0.5`, `.../rumble/pulse 1 300` and `/pseyosc/0/move/led 0 0.5 1` (orb color). `move/rpy` and `move/quat` are placeholders until sensor fusion is added. See [doc/Streaming.md](doc/Streaming.md) for all addresses and options. To check the output: `python tools/oscdump.py 4321 20`.
 
 ### `pseyosc-pair`: pairing & testing
 

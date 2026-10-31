@@ -20,7 +20,8 @@ Last updated: 2026-10-30.
 | `pseyosc-stream` (OSC): status, buttons, trigger, accel, gyro, battery; rumble and LED input | ✅ streams from a ZCM1 (~90 reports/s); LED/rumble input user-confirmed; rumble intensities map onto the motor's working range 128–255 ([Streaming.md](Streaming.md#status)) |
 | `pseyosc-video`: live camera image in a Win32 window (PS3EYEDriver + libusb) | ✅ PS3 Eye with WinUSB: 640x480 at 58 fps measured (60 Hz requested) and 69 fps (75 Hz), 320x240 at 186 fps (187 Hz); image quality to be checked by eye |
 | `pseyosc-track`: psmoveapi's tracker (OpenCV 4 from `../lib/opencv`), positions printed | ✅ user-confirmed: calibration and tracking work out of the box with one ZCM1; `--mirror` too |
-| Sensor fusion (`move/rpy`, `move/quat` are placeholders), magnetometer, tracking positions as OSC | ⏳ not started |
+| `pseyosc-stream --track`: tracking thread, calibration on join and on Select + Start, `track/found`, `track/pos` (cm, pinhole model), `track/xyz` (−1–1, z 0–1 of the tracking range) | ✅ user-confirmed with one controller (calibration, hue, mirror, positions and their scale); several controllers and `fov=` not yet ([Streaming.md](Streaming.md#status)) |
+| Sensor fusion (`move/rpy`, `move/quat` are placeholders), magnetometer | ⏳ not started |
 
 **Development hardware** (user's machine, Windows 10, VS 2022, CMake 3.30):
 
@@ -38,6 +39,8 @@ src/osc/       OscSender / OscReceiver: copied unchanged from wiimosc
 src/stream/    pseyosc-stream: MoveStreamer (listener → OSC, OSC input → rumble/LED) + CLI
 src/video/     pseyosc-video: camera viewer (PS3EYEDriver capture thread + Win32 window); Windows only
 src/track/     pseyosc-track: psmoveapi's tracker test (connects controllers itself, no MoveHub); Windows only
+src/tracking/  MoveTracker: psmoveapi's tracker on its own thread, for pseyosc-stream --track (_none.cpp: stub
+               without OpenCV); design in Streaming.md (Implementation)
 tools/         oscdump.py, oscsend.py, oscrate.py (copied from wiimosc)
 external/psmoveapi/  thp/psmoveapi (BSD), submodule, PATCHED (see §4); of its submodules, hidapi (controllers),
                      libusb-1.0 and PS3EYEDriver (camera) are needed; glm is part of its tree
@@ -87,4 +90,4 @@ doc/           Streaming.md, this file
 3. Magnetometer calibration (psmoveapi warns "not yet calibrated"; it has a `magnetometer_calibration` utility).
 4. Add motion to the idle check once the sensor noise is measured.
 5. Linux and macOS builds.
-6. The PS3 Eye camera: tracking positions as OSC in `pseyosc-stream`, resolving the orb color (tracker vs. id colors/`move/led`) and threading (tracker vs. MoveHub's device threads) clashes noted in §3b; 3D positions (`psmove_fusion`). Linux/macOS viewer and tracker.
+6. The PS3 Eye camera: confirm `--track` on hardware ([Streaming.md](Streaming.md#status)); 3D positions (`psmove_fusion`); Linux/macOS viewer and tracker.

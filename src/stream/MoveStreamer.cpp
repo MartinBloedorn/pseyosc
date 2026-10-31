@@ -57,7 +57,7 @@ MoveStreamer::MoveStreamer(OscSender &sender, const Options &options)
 {
 }
 
-void MoveStreamer::connected(int id, PSMove *, const std::string &)
+void MoveStreamer::connected(int id, PSMove *move, const std::string &)
 {
     {
         std::lock_guard<std::mutex> lock(mRequestMutex);
@@ -68,10 +68,19 @@ void MoveStreamer::connected(int id, PSMove *, const std::string &)
     // No sensor fusion yet: the orientation is sent once, as "no rotation", so receivers have the addresses.
     sendFloats(id, "move/rpy", {0.0f, 0.0f, 0.0f});
     sendFloats(id, "move/quat", {1.0f, 0.0f, 0.0f, 0.0f});
+    if (mTracker) {
+        {
+            std::lock_guard<std::mutex> lock(mTrackMutex);
+            mTracks[id] = Track{};
+        }
+        mTracker->addController(id, move);
+    }
 }
 
 void MoveStreamer::disconnected(int id)
 {
+    if (mTracker)
+        mTracker->removeController(id); // the tracker lets go of the handle before the hub closes it
     send(OscMessage(address(id, "status")).add(std::string("none")));
     mDevices[id] = Device{};
     std::lock_guard<std::mutex> lock(mRequestMutex);
@@ -82,9 +91,14 @@ void MoveStreamer::update(int id, PSMove *move)
 {
     Device &device = mDevices[id];
     const auto now = Clock::now();
-    applyRequest(id, move);
 
     const unsigned int buttons = psmove_get_buttons(move);
+    const unsigned int calibrationButtons = Btn_SELECT | Btn_START;
+    const bool isCalibrationPressed = (buttons & calibrationButtons) == calibrationButtons;
+    if (mTracker && isCalibrationPressed && !device.wasCalibrationPressed)
+        mTracker->requestCalibration(id);
+    device.wasCalibrationPressed = isCalibrationPressed;
+
     for (const ButtonName &button : sButtons)
         sendInt(id, button.path, (buttons & button.mask) ? 1 : 0);
 
@@ -107,6 +121,44 @@ void MoveStreamer::update(int id, PSMove *move)
     sendFloats(id, "move/accel", {x, y, z});
     psmove_get_gyroscope_frame(move, Frame_SecondHalf, &x, &y, &z);
     sendFloats(id, "move/gyro", {x * sRadiansToDegrees, y * sRadiansToDegrees, z * sRadiansToDegrees});
+}
+
+void MoveStreamer::updateOutput(int id, PSMove *move)
+{
+    applyRequest(id, move);
+    if (mTracker) {
+        // The orb shows the color the tracker looks for; it's off until the controller is calibrated.
+        unsigned char r = 0, g = 0, b = 0;
+        mTracker->orbColor(id, &r, &g, &b);
+        psmove_set_leds(move, r, g, b); // only sent if it changed
+    }
+}
+
+void MoveStreamer::tracked(int id, bool isFound, const TrackedPosition &position)
+{
+    std::lock_guard<std::mutex> lock(mTrackMutex);
+    Track &track = mTracks[id];
+    if (track.found != (isFound ? 1 : 0)) {
+        track.found = isFound ? 1 : 0;
+        send(OscMessage(address(id, "track/found")).add(static_cast<int32_t>(track.found)));
+    }
+    if (!isFound)
+        return;
+
+    const auto now = Clock::now();
+    if (now < track.nextPosition)
+        return;
+    if (mOptions.maxRate > 0)
+        track.nextPosition = now + std::chrono::microseconds(1000000 / mOptions.maxRate);
+    auto sendIfChanged = [&](const char *path, const float (&values)[3], float (&sent)[3]) {
+        if (track.hasSent && std::equal(std::begin(values), std::end(values), sent))
+            return;
+        std::copy(std::begin(values), std::end(values), sent);
+        send(OscMessage(address(id, path)).add(values[0]).add(values[1]).add(values[2]));
+    };
+    sendIfChanged("track/pos", position.position, track.sent.position);
+    sendIfChanged("track/xyz", position.normalized, track.sent.normalized);
+    track.hasSent = true;
 }
 
 void MoveStreamer::applyRequest(int id, PSMove *move)
@@ -155,8 +207,11 @@ void MoveStreamer::received(const OscReceivedMessage &message)
         return ignore(message, "unknown address");
     if (id >= MoveHub::sMaxDevices)
         return ignore(message, "id out of range");
-    if (isLed)
+    if (isLed) {
+        if (mTracker)
+            return ignore(message, "the orb's color is set by the tracker (--track)");
         return receivedLed(id, message);
+    }
     receivedRumble(id, path.substr(sizeof(sRumblePath) - 1), message);
 }
 

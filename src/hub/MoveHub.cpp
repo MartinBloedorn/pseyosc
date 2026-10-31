@@ -302,12 +302,18 @@ void MoveHub::runDevice(int index, PSMove *move)
     // The connection rumble ends before the listener takes over, so it can't cut short a rumble the listener sets
     // (psmoveapi can't tell the motor's state). Input reports queue up meanwhile.
     const Color color = sIdColors[id];
-    psmove_set_leds(move, color.r, color.g, color.b);
-    psmove_set_rumble(move, 160);
-    psmove_update_leds(move);
+    {
+        std::lock_guard<std::mutex> lock(*mOutputMutex);
+        psmove_set_leds(move, color.r, color.g, color.b);
+        psmove_set_rumble(move, 160);
+        psmove_update_leds(move);
+    }
     std::this_thread::sleep_for(sRumbleDuration);
-    psmove_set_rumble(move, 0);
-    psmove_update_leds(move);
+    {
+        std::lock_guard<std::mutex> lock(*mOutputMutex);
+        psmove_set_rumble(move, 0);
+        psmove_update_leds(move);
+    }
     if (mListener)
         mListener->connected(id, move, address);
 
@@ -345,18 +351,29 @@ void MoveHub::runDevice(int index, PSMove *move)
             lastActivity = now;
         }
 
-        // Sends changed LEDs/rumble (also the listener's), and resends them every few seconds: the controller switches them off otherwise.
-        if (psmove_update_leds(move) == Update_Failed)
-            break;
+        // Sends changed LEDs/rumble (also the listener's), and resends them every few seconds: the controller switches
+        // them off otherwise. Skipped while someone else uses the output (e.g. the tracker, calibrating).
+        {
+            std::unique_lock<std::mutex> outputLock(*mOutputMutex, std::try_to_lock);
+            if (outputLock.owns_lock()) {
+                if (mListener)
+                    mListener->updateOutput(id, move);
+                if (psmove_update_leds(move) == Update_Failed)
+                    break;
+            }
+        }
 
         if (!hasReport)
             std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
 
     if (!mIsRunning) {
-        psmove_set_leds(move, 0, 0, 0);
-        psmove_set_rumble(move, 0);
-        psmove_update_leds(move);
+        {
+            std::lock_guard<std::mutex> lock(*mOutputMutex);
+            psmove_set_leds(move, 0, 0, 0);
+            psmove_set_rumble(move, 0);
+            psmove_update_leds(move);
+        }
         if (mIsShuttingDownOnExit) {
             if (disconnectBluetoothDevice(address)) {
                 std::printf("[%d] %s %s: shutting down\n", id, label, address.c_str());
@@ -365,10 +382,11 @@ void MoveHub::runDevice(int index, PSMove *move)
             }
         }
     }
-    psmove_disconnect(move);
-    std::printf("[%d] %s %s disconnected\n", id, label, address.c_str());
+    // The listener first: it may still use the handle (the tracker does) until disconnected() returns.
     if (mListener)
         mListener->disconnected(id);
+    psmove_disconnect(move);
+    std::printf("[%d] %s %s disconnected\n", id, label, address.c_str());
 
     std::lock_guard<std::mutex> lock(mMutex);
     mSlots[index] = Slot();

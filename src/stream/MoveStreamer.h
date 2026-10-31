@@ -1,6 +1,7 @@
 #pragma once
 
 #include "hub/MoveHub.h"
+#include "tracking/MoveTracker.h"
 
 #include <chrono>
 #include <initializer_list>
@@ -22,8 +23,12 @@ struct OscReceivedMessage;
 
     It also takes OSC input (received()): <prefix>/<id>/move/rumble/{trigger,pulse} set a controller's rumble, and
     <prefix>/<id>/move/led its orb color.
+
+    With a tracker (setTracker()), it adds the controllers to it as they connect, streams their tracked positions
+    (<prefix>/<id>/track/found, <prefix>/<id>/track/pos, <prefix>/<id>/track/xyz), and sets the orb colors the tracker chose instead of the requested
+    ones. Pressing Select and Start together calibrates the controller again.
  */
-class MoveStreamer : public AbstractHubListener
+class MoveStreamer : public AbstractHubListener, public AbstractTrackerListener
 {
 public:
     struct Options {
@@ -33,14 +38,21 @@ public:
 
     MoveStreamer(OscSender &sender, const Options &options);
 
+    /*! \brief Enables tracking with \a tracker (which must be started). Must be called before the hub starts. */
+    void setTracker(MoveTracker *tracker) { mTracker = tracker; }
+
     void connected(int id, PSMove *move, const std::string &address) override;
     void disconnected(int id) override;
     void update(int id, PSMove *move) override;
+    void updateOutput(int id, PSMove *move) override;
+
+    /*! \brief Streams a tracked position. Called from the tracker's thread. */
+    void tracked(int id, bool isFound, const TrackedPosition &position) override;
 
     /*! \brief Handles an OSC message received on the input port. Called from the receiver's thread.
 
-        Requests are stored, and applied by the controller's own thread on its next update(); requests for ids that
-        aren't connected are dropped.
+        Requests are stored, and applied by the controller's own thread on its next updateOutput(); requests for ids
+        that aren't connected are dropped. With a tracker, <prefix>/<id>/move/led is ignored.
      */
     void received(const OscReceivedMessage &message);
 
@@ -50,6 +62,15 @@ private:
     struct Device {
         Clock::time_point nextContinuous;
         std::map<std::string, std::vector<float>> sentValues; //!< by path, for change detection
+        bool wasCalibrationPressed = false; //!< Select and Start were held together
+    };
+
+    /*! \brief What was last sent of a controller's tracked position (tracker's thread). */
+    struct Track {
+        int found = -1; //!< -1: not sent yet
+        TrackedPosition sent;
+        bool hasSent = false;
+        Clock::time_point nextPosition;
     };
 
     /*! \brief A controller's rumble and orb color, as last requested over OSC.
@@ -89,4 +110,9 @@ private:
     Request mRequests[MoveHub::sMaxDevices];
     std::mutex mRequestMutex;
     std::set<std::string> mIgnoredAddresses; //!< receiver's thread only
+
+    MoveTracker *mTracker = nullptr;
+    /*! \brief Per id: written by the tracker's thread, reset on connecting (guarded by mTrackMutex). */
+    Track mTracks[MoveHub::sMaxDevices];
+    std::mutex mTrackMutex;
 };

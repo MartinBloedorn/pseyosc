@@ -1,6 +1,7 @@
 /*! \brief Streaming tool: pairs controllers like pseyosc-pair, and streams their input as OSC. */
 
 #include "MoveStreamer.h"
+#include "tracking/MoveTracker.h"
 #include "osc/OscReceiver.h"
 #include "osc/OscSender.h"
 
@@ -21,6 +22,46 @@
 namespace {
 
 std::atomic<bool> sIsRunning{true};
+
+/*! \brief Parses "<name>=<number>" into \a value, if \a option starts with \a name; false if it doesn't. */
+bool parseNumber(const std::string &option, const char *name, float *value, bool *isValid)
+{
+    const size_t length = std::strlen(name);
+    if (option.compare(0, length, name) != 0 || option.size() <= length || option[length] != '=')
+        return false;
+    char *rest = nullptr;
+    *value = std::strtof(option.c_str() + length + 1, &rest);
+    *isValid = *rest == '\0' && rest != option.c_str() + length + 1;
+    return true;
+}
+
+/*! \brief Parses the options of "--track": comma-separated "exposure=<0-1>", "mirror", "hue", "fov=<degrees>". */
+bool parseTrackOptions(const std::string &text, MoveTracker::Options *options)
+{
+    size_t start = 0;
+    while (start < text.size()) {
+        size_t end = text.find(',', start);
+        if (end == std::string::npos)
+            end = text.size();
+        const std::string option = text.substr(start, end - start);
+        bool isValid = true;
+        if (option == "mirror") {
+            options->isMirrored = true;
+        } else if (option == "hue") {
+            options->isHueCalibrating = true;
+        } else if (parseNumber(option, "exposure", &options->exposure, &isValid)) {
+            if (!isValid || options->exposure < 0.0f || options->exposure > 1.0f)
+                return false;
+        } else if (parseNumber(option, "fov", &options->fieldOfView, &isValid)) {
+            if (!isValid || options->fieldOfView <= 0.0f || options->fieldOfView >= 180.0f)
+                return false;
+        } else if (!option.empty()) {
+            return false;
+        }
+        start = end + 1;
+    }
+    return true;
+}
 
 /*! \brief Turns "pseyosc", "/pseyosc/" etc. into "/pseyosc"; an empty prefix stays empty. */
 std::string normalizePrefix(std::string prefix)
@@ -49,7 +90,17 @@ void printUsage()
                 "                     switch off controllers that have been idle this long (default 0 = never);\n"
                 "                     counts buttons and the trigger, not motion\n"
                 "  --id <id>=<addr>   always give the controller with this Bluetooth address this id (0-%d),\n"
-                "                     e.g. --id 0=00:13:8A:9A:FE:2E; repeatable\n",
+                "                     e.g. --id 0=00:13:8A:9A:FE:2E; repeatable\n"
+                "  --track [options]  track the orbs with the camera, and stream their positions\n"
+                "                     (<prefix>/<id>/track/found, <prefix>/<id>/track/pos: x, y, z in cm from the lens;\n"
+                "                     z out of the lens, y up, x to the camera's left; <prefix>/<id>/track/xyz: x, y\n"
+                "                     -1-1 across the image, z 0-1 of the tracking range); the tracker sets the orb colors,\n"
+                "                     <prefix>/<id>/move/led is ignored. Controllers are calibrated when they connect,\n"
+                "                     and again when Select and Start are pressed together. Options, comma-separated:\n"
+                "                     exposure=<0-1> (default 0.3), mirror (mirror the image), hue (calibrate the\n"
+                "                     colors once, with the first controller), fov=<degrees> (the lens's diagonal\n"
+                "                     field of view: 75 blue dot (default), 56 red dot),\n"
+                "                     e.g. --track exposure=0.2,mirror\n",
                 MoveHub::sMaxDevices - 1);
 }
 
@@ -66,6 +117,8 @@ int main(int argc, char **argv)
     bool isRepairing = false;
     bool isShuttingDownOnExit = false;
     double idleTimeout = 0.0;
+    bool isTracking = false;
+    MoveTracker::Options trackOptions;
 
     for (int i = 1; i < argc; ++i) {
         const bool hasValue = i + 1 < argc;
@@ -91,6 +144,13 @@ int main(int argc, char **argv)
             isShuttingDownOnExit = true;
         } else if (std::strcmp(argv[i], "--id") == 0 && hasValue) {
             fixedIds.push_back(argv[++i]);
+        } else if (std::strcmp(argv[i], "--track") == 0) {
+            isTracking = true;
+            // The options are optional: the next argument is one, unless it's the next option.
+            if (hasValue && std::strncmp(argv[i + 1], "--", 2) != 0 && !parseTrackOptions(argv[++i], &trackOptions)) {
+                printUsage();
+                return 1;
+            }
         } else {
             printUsage();
             return 1;
@@ -132,7 +192,14 @@ int main(int argc, char **argv)
     }
 
     MoveStreamer streamer(sender, options);
+    MoveTracker tracker(&streamer, trackOptions); // before the hub, so it's destroyed after it
     MoveHub hub(&streamer);
+    if (isTracking) {
+        if (!tracker.start())
+            return 1;
+        streamer.setTracker(&tracker);
+        hub.setOutputMutex(&tracker.outputMutex());
+    }
     for (const std::string &fixedId : fixedIds) {
         std::string error;
         if (!hub.parseFixedId(fixedId, &error)) {
@@ -156,5 +223,6 @@ int main(int argc, char **argv)
         std::this_thread::sleep_for(std::chrono::milliseconds(100));
     receiver.stop();
     hub.stop(); // listeners get disconnected() for every controller, so receivers get "status none"
+    tracker.stop();
     return 0;
 }
