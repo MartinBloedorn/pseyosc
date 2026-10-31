@@ -38,7 +38,7 @@ const ButtonName sButtonNames[] = {
 class ButtonPrinter : public AbstractHubListener
 {
 public:
-    void update(int id, PSMove *move) override
+    void update(int id, PSMove *move, int) override
     {
         unsigned int pressed = 0;
         unsigned int released = 0;

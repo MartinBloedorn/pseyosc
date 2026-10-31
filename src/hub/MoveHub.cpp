@@ -323,11 +323,12 @@ void MoveHub::runDevice(int index, PSMove *move)
     unsigned char lastTrigger = 0;
     while (mIsRunning) {
         const Clock::time_point now = Clock::now();
-        const bool hasReport = psmove_poll(move) != 0;
+        const int sequence = psmove_poll(move);
+        const bool hasReport = sequence != 0;
         if (hasReport) {
             lastReport = now;
             if (mListener)
-                mListener->update(id, move);
+                mListener->update(id, move, sequence);
 
             const unsigned int buttons = psmove_get_buttons(move);
             const unsigned char trigger = psmove_get_trigger(move);

@@ -86,8 +86,25 @@ if(WIN32)
     target_link_libraries(osc PRIVATE ws2_32)
 endif()
 
+# xioTechnologies Fusion (Madgwick's AHRS), C library; the sensor fusion is taken from wiimosc
+add_subdirectory(external/Fusion/Fusion ${CMAKE_BINARY_DIR}/external/Fusion EXCLUDE_FROM_ALL)
+
+add_library(motionfusion STATIC
+    src/fusion/Orientation.h
+    src/fusion/Orientation.cpp
+    src/fusion/AbstractOrientationFilter.h
+    src/fusion/MadgwickFilter.h
+    src/fusion/MadgwickFilter.cpp
+    src/fusion/MotionFusion.h
+    src/fusion/MotionFusion.cpp)
+target_include_directories(motionfusion PUBLIC src)
+target_link_libraries(motionfusion PRIVATE Fusion)
+# Fusion's headers use C99 designated initializers, which C++ only has since C++20. Only this target's sources
+# include them; its own headers stay C++17.
+set_target_properties(motionfusion PROPERTIES CXX_STANDARD 20)
+
 add_executable(pseyosc-stream src/stream/main.cpp src/stream/MoveStreamer.h src/stream/MoveStreamer.cpp)
-target_link_libraries(pseyosc-stream PRIVATE hub osc)
+target_link_libraries(pseyosc-stream PRIVATE hub osc motionfusion)
 if(WIN32)
     target_compile_definitions(pseyosc-stream PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)
 endif()

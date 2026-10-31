@@ -31,11 +31,12 @@ public:
     /*! \brief The controller is gone, or the hub stops. Called before \a move is closed. */
     virtual void disconnected(int id) {}
 
-    /*! \brief Called after each new input report of a connected controller (psmove_poll() returned data).
+    /*! \brief Called after each new input report of a connected controller (psmove_poll() returned data), with
+        psmove_poll()'s sequence number (1-16, counting reports: a gap means lost ones).
 
         Only for reading input: the controller's output (LEDs, rumble) belongs into updateOutput().
      */
-    virtual void update(int id, PSMove *move) {}
+    virtual void update(int id, PSMove *move, int sequence) {}
 
     /*! \brief The place to set the controller's output: psmove_set_leds(), psmove_set_rumble().
 

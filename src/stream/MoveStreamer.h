@@ -1,11 +1,13 @@
 #pragma once
 
+#include "fusion/MotionFusion.h"
 #include "hub/MoveHub.h"
 #include "tracking/MoveTracker.h"
 
 #include <chrono>
 #include <initializer_list>
 #include <map>
+#include <memory>
 #include <mutex>
 #include <set>
 #include <string>
@@ -19,14 +21,18 @@ struct OscReceivedMessage;
 
     Addresses have the form <prefix>/<id>/<path>, see doc/Streaming.md; they follow wiimosc's, with move/ in place of
     mote/. Values are only sent when they change. Buttons are sent immediately, continuous values (acceleration,
-    rotation rates, trigger) at most \c maxRate times per second.
+    rotation rates, trigger, orientation) at most \c maxRate times per second.
+
+    With sensor fusion (Options::filter), each controller gets a MotionFusion: once it's ready, move/rpy and move/quat
+    carry its orientation. Pressing Select and Start together restarts it (yaw 0 is then the current heading).
 
     It also takes OSC input (received()): <prefix>/<id>/move/rumble/{trigger,pulse} set a controller's rumble, and
     <prefix>/<id>/move/led its orb color.
 
     With a tracker (setTracker()), it adds the controllers to it as they connect, streams their tracked positions
-    (<prefix>/<id>/track/found, <prefix>/<id>/track/pos, <prefix>/<id>/track/xyz), and sets the orb colors the tracker chose instead of the requested
-    ones. Pressing Select and Start together calibrates the controller again.
+    (<prefix>/<id>/track/found, <prefix>/<id>/track/pos, <prefix>/<id>/track/xyz), and sets the orb colors the
+    tracker chose instead of the requested ones. Pressing Select and Start together also calibrates the controller's
+    tracking again.
  */
 class MoveStreamer : public AbstractHubListener, public AbstractTrackerListener
 {
@@ -34,6 +40,7 @@ public:
     struct Options {
         std::string prefix; //!< normalized: empty, or starting with '/' and without trailing '/'
         int maxRate = 0;    //!< per controller, in Hz; 0 is unlimited
+        FilterType filter = FilterType::None; //!< sensor fusion; None: move/rpy and move/quat are placeholders
     };
 
     MoveStreamer(OscSender &sender, const Options &options);
@@ -43,7 +50,7 @@ public:
 
     void connected(int id, PSMove *move, const std::string &address) override;
     void disconnected(int id) override;
-    void update(int id, PSMove *move) override;
+    void update(int id, PSMove *move, int sequence) override;
     void updateOutput(int id, PSMove *move) override;
 
     /*! \brief Streams a tracked position. Called from the tracker's thread. */
@@ -63,6 +70,8 @@ private:
         Clock::time_point nextContinuous;
         std::map<std::string, std::vector<float>> sentValues; //!< by path, for change detection
         bool wasCalibrationPressed = false; //!< Select and Start were held together
+        std::unique_ptr<MotionFusion> fusion; //!< with Options::filter
+        bool wasFusionReady = false;
     };
 
     /*! \brief What was last sent of a controller's tracked position (tracker's thread). */
@@ -91,6 +100,11 @@ private:
     void sendFloats(int id, const char *path, std::initializer_list<float> values);
     /*! \brief Sends the value as int, if it differs from the one last sent on \a path. */
     void sendInt(int id, const char *path, int value);
+
+    /*! rief Feeds the report's motion samples to the controller's fusion. */
+    void updateFusion(int id, PSMove *move, int sequence);
+    /*! rief Requests a rumble pulse, as if received over OSC. */
+    void requestPulse(int id, int rumble, int durationMs);
 
     void applyRequest(int id, PSMove *move);
     /*! \brief Handles <prefix>/<id>/move/rumble/<command>. Called from the receiver's thread. */

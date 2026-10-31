@@ -31,6 +31,10 @@ const char sLedPath[] = "move/led";
 /*! \brief Ignored addresses are printed once each, up to this many. */
 const size_t sMaxIgnoredAddresses = 64;
 
+/*! \brief The rumble once the sensor fusion is ready: shorter than the connection's, since it's felt on a table. */
+const int sFusionReadyRumble = 160;
+const int sFusionReadyRumbleMs = 200;
+
 /*! \brief The lowest rumble value that turns the motor: on a ZCM1, 0.4 (102) did nothing, 0.5 (128) rumbled. */
 const int sMinRumble = 128;
 
@@ -49,6 +53,12 @@ int toRumble(float intensity)
     return static_cast<int>(std::lround(sMinRumble + clamped * (255 - sMinRumble)));
 }
 
+/*! \brief Seconds on a steady clock. */
+double seconds(std::chrono::steady_clock::time_point time)
+{
+    return std::chrono::duration<double>(time.time_since_epoch()).count();
+}
+
 } // namespace
 
 MoveStreamer::MoveStreamer(OscSender &sender, const Options &options)
@@ -65,9 +75,14 @@ void MoveStreamer::connected(int id, PSMove *move, const std::string &)
     }
     mDevices[id] = Device{};
     send(OscMessage(address(id, "status")).add(std::string("move")));
-    // No sensor fusion yet: the orientation is sent once, as "no rotation", so receivers have the addresses.
-    sendFloats(id, "move/rpy", {0.0f, 0.0f, 0.0f});
-    sendFloats(id, "move/quat", {1.0f, 0.0f, 0.0f, 0.0f});
+    if (mOptions.filter != FilterType::None) {
+        mDevices[id].fusion = std::make_unique<MotionFusion>(mOptions.filter);
+        std::printf("[%d] fusion: waiting for the controller to be still\n", id);
+    } else {
+        // Without sensor fusion, the orientation is sent once, as "no rotation", so receivers have the addresses.
+        sendFloats(id, "move/rpy", {0.0f, 0.0f, 0.0f});
+        sendFloats(id, "move/quat", {1.0f, 0.0f, 0.0f, 0.0f});
+    }
     if (mTracker) {
         {
             std::lock_guard<std::mutex> lock(mTrackMutex);
@@ -87,7 +102,7 @@ void MoveStreamer::disconnected(int id)
     mRequests[id] = Request{};
 }
 
-void MoveStreamer::update(int id, PSMove *move)
+void MoveStreamer::update(int id, PSMove *move, int sequence)
 {
     Device &device = mDevices[id];
     const auto now = Clock::now();
@@ -95,9 +110,16 @@ void MoveStreamer::update(int id, PSMove *move)
     const unsigned int buttons = psmove_get_buttons(move);
     const unsigned int calibrationButtons = Btn_SELECT | Btn_START;
     const bool isCalibrationPressed = (buttons & calibrationButtons) == calibrationButtons;
-    if (mTracker && isCalibrationPressed && !device.wasCalibrationPressed)
-        mTracker->requestCalibration(id);
+    if (isCalibrationPressed && !device.wasCalibrationPressed) {
+        if (mTracker)
+            mTracker->requestCalibration(id);
+        if (device.fusion) {
+            device.fusion->restart();
+            std::printf("[%d] fusion: restarting, waiting for the controller to be still\n", id);
+        }
+    }
     device.wasCalibrationPressed = isCalibrationPressed;
+    updateFusion(id, move, sequence);
 
     for (const ButtonName &button : sButtons)
         sendInt(id, button.path, (buttons & button.mask) ? 1 : 0);
@@ -118,9 +140,55 @@ void MoveStreamer::update(int id, PSMove *move)
     // Each report holds two samples; the second half is the newer one.
     float x, y, z;
     psmove_get_accelerometer_frame(move, Frame_SecondHalf, &x, &y, &z);
-    sendFloats(id, "move/accel", {x, y, z});
+    const Vector3 accel{x, y, z};
+    sendFloats(id, "move/accel", {accel.x, accel.y, accel.z});
     psmove_get_gyroscope_frame(move, Frame_SecondHalf, &x, &y, &z);
-    sendFloats(id, "move/gyro", {x * sRadiansToDegrees, y * sRadiansToDegrees, z * sRadiansToDegrees});
+    const Vector3 gyro{x * sRadiansToDegrees, y * sRadiansToDegrees, z * sRadiansToDegrees};
+    sendFloats(id, "move/gyro", {gyro.x, gyro.y, gyro.z});
+
+    if (device.fusion && device.fusion->isReady()) {
+        const Quaternion q = device.fusion->orientation();
+        const EulerAngles angles = toEulerAngles(q);
+        sendFloats(id, "move/rpy", {angles.roll, angles.pitch, angles.yaw});
+        sendFloats(id, "move/quat", {q.w, q.x, q.y, q.z});
+    }
+}
+
+void MoveStreamer::updateFusion(int id, PSMove *move, int sequence)
+{
+    Device &device = mDevices[id];
+    if (!device.fusion)
+        return;
+
+    // psmoveapi's sensor axes are the body frame (fusion/Orientation.h), verified on a ZCM1.
+    Vector3 gyro[2], accel[2];
+    for (int i = 0; i < 2; ++i) {
+        const PSMove_Frame frame = i == 0 ? Frame_FirstHalf : Frame_SecondHalf;
+        float x, y, z;
+        psmove_get_accelerometer_frame(move, frame, &x, &y, &z);
+        accel[i] = Vector3{x, y, z};
+        psmove_get_gyroscope_frame(move, frame, &x, &y, &z);
+        gyro[i] = Vector3{x * sRadiansToDegrees, y * sRadiansToDegrees, z * sRadiansToDegrees};
+    }
+    device.fusion->addReport(seconds(Clock::now()), sequence, gyro, accel);
+
+    const bool isReady = device.fusion->isReady();
+    if (isReady && !device.wasFusionReady) {
+        const FilterSetup &setup = device.fusion->setup();
+        std::printf("[%d] fusion: ready (gyro bias %.2f %.2f %.2f deg/s; %.1f reports/s)\n", id, setup.gyroBias.x,
+                    setup.gyroBias.y, setup.gyroBias.z, 0.5f * setup.sampleRate);
+        requestPulse(id, sFusionReadyRumble, sFusionReadyRumbleMs);
+    }
+    device.wasFusionReady = isReady;
+}
+
+void MoveStreamer::requestPulse(int id, int rumble, int durationMs)
+{
+    std::lock_guard<std::mutex> lock(mRequestMutex);
+    Request &request = mRequests[id];
+    request.rumble = rumble;
+    request.isPulse = true;
+    request.pulseEnd = Clock::now() + std::chrono::milliseconds(durationMs);
 }
 
 void MoveStreamer::updateOutput(int id, PSMove *move)

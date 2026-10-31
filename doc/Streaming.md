@@ -17,6 +17,7 @@ pseyosc-stream --host 127.0.0.1 --port 4321 --prefix pseyosc [--in-port 4322] [-
 | `--id <id>=<address>` | | Always gives the controller with this Bluetooth address this id (0–7) and its orb color. Repeatable; also available in `pseyosc-pair`. |
 | `--shutdown-on-exit` | off | Switches off all connected controllers when quitting, by dropping their Bluetooth connections. |
 | `--idle-timeout <minutes>` | `0` (never) | Switches off controllers that have been idle this long. Only button and trigger changes count as activity so far, not motion. Fractions work (`0.5`). |
+| `--fusion [madg\|off]` | off | Sensor fusion: `move/rpy` with yaw, and `move/quat`, see [Sensor fusion](#sensor-fusion---fusion). `madg` (Madgwick's AHRS) is the only filter, and the default. |
 | `--track [options]` | off | Tracks the orbs with the PS3 Eye camera, see [Tracking](#tracking---track). Options, comma-separated: `exposure=<0-1>` (default `0.3`), `mirror`, `hue`, `fov=<degrees>` (default `75`); e.g. `--track exposure=0.2,mirror`. |
 
 Pairing controllers plugged in over USB needs Administrator rights on Windows, as for `pseyosc-pair`; without them, controllers paired before still connect when PS is pressed.
@@ -31,10 +32,10 @@ Pairing controllers plugged in over USB needs Administrator rights on Windows, a
 | `<p>/battery` | float 0–1 | on change; in steps of 0.2 (the controller reports levels 0–5). While charging, the level isn't known and the last one stays; `1` when charged on the charger. |
 | `<p>/move/button/{triangle,circle,cross,square,select,start,ps,move}` | int 0/1 | on change |
 | `<p>/move/button/trigger` | float 0–1 | continuous: the analog trigger. There's no digital trigger address; threshold this value instead. |
-| `<p>/move/rpy` | 3 floats, degrees: roll, pitch, yaw | **placeholder**: `0, 0, 0`, sent once on connect. Sensor fusion comes in a later step. |
-| `<p>/move/quat` | 4 floats: w, x, y, z | **placeholder**: `1, 0, 0, 0` (no rotation), sent once on connect |
-| `<p>/move/accel` | 3 floats, g: x, y, z | continuous, calibrated by psmoveapi (factory calibration read over USB when pairing) |
-| `<p>/move/gyro` | 3 floats, deg/s: x, y, z | continuous: rotation rates about the controller's x, y, z axes, calibrated by psmoveapi |
+| `<p>/move/rpy` | 3 floats, degrees: roll, pitch, yaw | with `--fusion`: continuous, once the fusion is ready (see [Sensor fusion](#sensor-fusion---fusion)). Without: **placeholder** `0, 0, 0`, sent once on connect. |
+| `<p>/move/quat` | 4 floats: w, x, y, z | with `--fusion`: continuous, once ready; the rotation from the controller's axes to the world's (z up). Without: **placeholder** `1, 0, 0, 0` (no rotation), sent once on connect |
+| `<p>/move/accel` | 3 floats, g: x, y, z | continuous, calibrated by psmoveapi (factory calibration read over USB when pairing); ≈ `0 0 1` lying with the buttons up |
+| `<p>/move/gyro` | 3 floats, deg/s: x, y, z | continuous: rotation rates about the controller's x, y, z axes (right-handed), calibrated by psmoveapi |
 
 With `--track` (see [Tracking](#tracking---track)):
 
@@ -46,7 +47,16 @@ With `--track` (see [Tracking](#tracking---track)):
 
 "Continuous" values are sent whenever they change, at most `--max-rate` times per second. After connecting, every value is sent once, so receivers start with a complete state.
 
-**Axes** are psmoveapi's sensor axes, which aren't the Wiimote's, so `accel`/`gyro` don't map one-to-one onto wiimosc's. According to psmoveapi's docs, y points along the controller towards the orb (`accel` y ≈ 1 with the orb up); the directions of x and z still need checking on hardware, and belong to the sensor fusion step.
+**Axes** of `accel` and `gyro` are psmoveapi's sensor axes, verified on a ZCM1: holding the controller pointing forward with the buttons up, **x points to the right, y along the controller towards the orb, z out of the buttons' face** (right-handed). `accel` measures the reaction to gravity: y ≈ 1 with the orb up, z ≈ 1 lying with the buttons up. A ZCM1 can't lie flat: on a table it rests tilted ~32° onto either side (`accel` ≈ `-0.51 0.03 0.85` on its right, `0.55 0.04 0.83` on its left).
+
+## Sensor fusion (`--fusion`)
+
+- **Startup**: after connecting, the controller has to be **still for 1 s** (e.g. lying on the table); any movement restarts that wait. That measures the gyro's bias and the report rate, and gives the starting pitch and roll; **yaw 0 is the heading at that moment**. The terminal shows `[0] fusion: waiting for the controller to be still`, then `[0] fusion: ready (gyro bias ...; N reports/s)`, and **the controller rumbles for 200 ms**. Until then, `move/rpy` and `move/quat` aren't sent.
+- **Restart**: pressing **Select and Start together** restarts it (wait for stillness, yaw 0 = the current heading); with `--track`, the same buttons also calibrate the tracking again.
+- **Angles** (`move/rpy`), each a right-handed rotation about the controller's axes: **roll** about its long axis, positive rolling right (clockwise seen from behind); **pitch** positive pointing up; **yaw** about the vertical, positive turning left (counter-clockwise seen from above). Order: yaw, then pitch, then roll. Pointing straight up or down, yaw and roll can't be told apart (gimbal lock); `move/quat` has no such problem. Verified on a ZCM1: resting on its right side roll +31°, on its left −33°, orb up pitch +84°, turned left on the table yaw +95°.
+- **Drift**: the accelerometer keeps pitch and roll correct; **yaw is from the gyro alone and drifts** slowly (~0.04 deg/s at rest right after startup). The bias is re-estimated whenever the controller rests for 3 s. The magnetometer isn't used (yet).
+- **Fast movement**: while the controller is swung or shaken (acceleration more than 20% off 1 g), the accelerometer is ignored and the gyro carries the orientation alone; once still, pitch and roll return to the accelerometer's within ~1 s. The gyro's range isn't known, so Fusion's overrange handling is off.
+- **Same filter as wiimosc**: `src/fusion` is wiimosc's `MadgwickFilter` (xioTechnologies Fusion, with wiimosc's accelerometer gate and rest gain, tuned on a Wiimote Plus) and its startup. Angles have the same meaning as wiimosc's fused `mote/rpy` in intent; whether the roll signs match hasn't been compared on hardware.
 
 ## Input (`--in-port`)
 
@@ -88,7 +98,7 @@ psmoveapi gives the orb's center and radius in the image (pixels), and estimates
 
 - **Rate**: a ZCM1 connected over Bluetooth sends ~90 input reports/s (measured with a resting controller). `accel` and `gyro` change on nearly every one, so that's ~180 messages/s per controller. Each report holds two sensor samples; the streamer sends the newer one.
 - **Battery** was seen to change from 0.8 to 0.6 within seconds of connecting; it may flicker between two levels at a step boundary. Not yet investigated.
-- **Magnetometer**: not streamed yet. psmoveapi warns `Magnetometer ... not yet calibrated`; it belongs to the sensor fusion step.
+- **Magnetometer**: not streamed or used yet. psmoveapi warns `Magnetometer ... not yet calibrated`.
 - **Testing**: only one program should receive on the target port, see wiimosc's notes. `python tools/oscdump.py 4321 20` prints a summary per address, `python tools/oscrate.py 4321 20` the messages per second.
 
 ## Implementation
@@ -96,6 +106,7 @@ psmoveapi gives the orb's center and radius in the image (pixels), and estimates
 - `src/hub/MoveHub`: shared by both tools, see [DevelopmentNotes](DevelopmentNotes.md#3-pairing--hub-findings-and-decisions). It calls the listener from each controller's own thread: `connected()` after the connection rumble, `update()` after each input report, `disconnected()` when it goes away or the tool quits. After each `update()`, the hub sends changed LEDs/rumble (`psmove_update_leds()`).
 - **Output and threads**: the hub's controller threads read input in `update()`, and set the output (LEDs, rumble) in the listener's `updateOutput()`, holding the hub's output mutex, then send it. With `--track`, that mutex is the tracker's (`MoveHub::setOutputMutex()`).
 - `src/tracking/MoveTracker`: psmoveapi's tracker on a thread of its own, which also owns the preview window. Controllers are added/removed by the streamer from their threads (`connected()`/`disconnected()`; the hub calls `disconnected()` before closing the handle, and `removeController()` waits until the tracker lets go of it). psmoveapi's handles aren't thread-safe, and the tracker uses them only while calibrating (blinking the orb, switching the others off): it holds the output mutex meanwhile, and the controller threads skip their output (but keep reading input; reads and writes don't share state in psmoveapi or hidapi on Windows). Afterwards, the tracker's LED updates are off (`psmove_tracker_set_auto_update_leds()`), and the controller threads set the orb color it chose (`orbColor()`). Positions are reported per frame to the streamer (`AbstractTrackerListener::tracked()`), which sends them from the tracker's thread, with its own change detection. Without OpenCV, `MoveTracker_none.cpp` is built instead.
+- `src/fusion`: `MotionFusion` per controller (owned by `MoveStreamer`'s device state, used on the controller's thread only): rest calibration, then two samples per report into an `AbstractOrientationFilter` (`MadgwickFilter`, the only file that includes Fusion; C++20 for Fusion's headers, see wiimosc's Fusion.md). The samples' time step is the report period measured at rest (half of it per sample), stretched by lost reports, which the sequence number from `psmove_poll()` shows (the hub passes it to `update()`): the host's arrival times are uneven, and reports queue up while the thread is busy (e.g. during the connection rumble; the first 0.5 s after a restart are skipped, so those don't distort the measured rate). More than 15 lost reports in a row can't be told apart.
 - `src/osc`: copied unchanged from wiimosc (`OscSender`: minimal OSC 1.0 encoder + UDP; `OscReceiver`: parser + UDP receiver thread).
 - `src/stream/MoveStreamer`: the listener that maps controller state to OSC, sending a value only if it differs from the last one sent on that address (cached per controller). OSC input is stored per id under a mutex by the receiver's thread, and applied with `psmove_set_rumble()`/`psmove_set_leds()` by the controller's thread on its next `update()`, since only that thread touches its `PSMove`.
 - `tools/`: `oscdump.py`, `oscsend.py`, `oscrate.py`, copied from wiimosc.
@@ -111,4 +122,5 @@ psmoveapi gives the orb's center and radius in the image (pixels), and estimates
 | `--track`: several controllers, joining while tracking, quitting during a calibration | ⏳ not yet confirmed |
 | `--in-port`: `move/led`, `move/rumble/pulse`, `move/rumble/trigger` | ✅ user-confirmed on a ZCM1; below 0.5 the motor didn't turn, hence the mapping onto 128–255 (user-confirmed) |
 | `status none` on quit, button presses, `--max-rate`, reconnect while streaming | ⏳ not yet confirmed |
-| Axis directions of `accel`/`gyro` | ⏳ from psmoveapi's docs, not verified |
+| Axis directions of `accel`/`gyro` | ✅ verified on a ZCM1 (poses and rotations, see [Axes](#addresses)) |
+| `--fusion`: startup, ready rumble, `rpy` signs, `quat` | ✅ user-confirmed live on a ZCM1, including the Select + Start restart ("filters look good on a first try"); signs of roll, pitch, yaw verified with pose captures. ⏳ several controllers, comparison with wiimosc |

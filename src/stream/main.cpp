@@ -91,6 +91,11 @@ void printUsage()
                 "                     counts buttons and the trigger, not motion\n"
                 "  --id <id>=<addr>   always give the controller with this Bluetooth address this id (0-%d),\n"
                 "                     e.g. --id 0=00:13:8A:9A:FE:2E; repeatable\n"
+                "  --fusion [madg|off]\n"
+                "                     sensor fusion: move/rpy including yaw, and move/quat; madg = Madgwick's AHRS,\n"
+                "                     the default filter. Each controller first has to be still for a moment, and\n"
+                "                     rumbles briefly once it's calibrated; Select and Start together restart it\n"
+                "                     (default: no fusion, placeholders)\n"
                 "  --track [options]  track the orbs with the camera, and stream their positions\n"
                 "                     (<prefix>/<id>/track/found, <prefix>/<id>/track/pos: x, y, z in cm from the lens;\n"
                 "                     z out of the lens, y up, x to the camera's left; <prefix>/<id>/track/xyz: x, y\n"
@@ -144,6 +149,11 @@ int main(int argc, char **argv)
             isShuttingDownOnExit = true;
         } else if (std::strcmp(argv[i], "--id") == 0 && hasValue) {
             fixedIds.push_back(argv[++i]);
+        } else if (std::strcmp(argv[i], "--fusion") == 0) {
+            // The filter's name is optional: the next argument is only taken if it is one.
+            options.filter = FilterType::Madgwick;
+            if (hasValue && parseFilterType(argv[i + 1], &options.filter))
+                ++i;
         } else if (std::strcmp(argv[i], "--track") == 0) {
             isTracking = true;
             // The options are optional: the next argument is one, unless it's the next option.
